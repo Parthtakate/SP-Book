@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/customer.dart';
 import '../../providers/transaction_provider.dart';
 import '../transaction/add_transaction_screen.dart';
@@ -60,6 +61,29 @@ class CustomerDetailsScreen extends ConsumerWidget {
       balanceColor = Colors.red;
     }
 
+    void sendReminder() async {
+      if (customer.phone == null || customer.phone!.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No phone number saved for this customer.')));
+        return;
+      }
+      
+      final message = 'Hi ${customer.name}, your pending balance is ${currencyFormat.format(balance.abs())}. Please clear it soon.';
+      final url = Uri.parse('whatsapp://send?phone=${customer.phone}&text=${Uri.encodeComponent(message)}');
+      
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url);
+      } else {
+        final smsUrl = Uri.parse('sms:${customer.phone}?body=${Uri.encodeComponent(message)}');
+        if (await canLaunchUrl(smsUrl)) {
+          await launchUrl(smsUrl);
+        } else {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open WhatsApp or SMS.')));
+          }
+        }
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text(customer.name),
@@ -69,28 +93,47 @@ class CustomerDetailsScreen extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.all(20),
             color: balanceColor.withOpacity(0.1),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            child: Column(
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      balanceStatus,
-                      style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          balanceStatus,
+                          style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          currencyFormat.format(balance.abs()),
+                          style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 24),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      currencyFormat.format(balance.abs()),
-                      style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 24),
+                    Icon(
+                      Icons.account_balance_wallet,
+                      size: 40,
+                      color: balanceColor,
                     ),
                   ],
                 ),
-                Icon(
-                  Icons.account_balance_wallet,
-                  size: 40,
-                  color: balanceColor,
-                ),
+                if (balance > 0) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: sendReminder,
+                      icon: const Icon(Icons.message),
+                      label: const Text('Send Reminder on WhatsApp'),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -120,7 +163,8 @@ class CustomerDetailsScreen extends ConsumerWidget {
                                   File(t.imagePath!), 
                                   width: 40, 
                                   height: 40, 
-                                  fit: BoxFit.cover
+                                  fit: BoxFit.cover,
+                                  cacheWidth: 120, // Forces Flutter to decode a tiny thumbnail, saving RAM
                                 ),
                               ),
                             )
