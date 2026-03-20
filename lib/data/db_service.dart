@@ -89,4 +89,10 @@ class DbService {
   Future<void> deleteTransaction(String transactionId) async {
     await _transactions!.delete(transactionId);
   }
+
+  /// Clears ALL local data from both boxes. Called before a full restore.
+  Future<void> clearAll() async {
+    await _customers!.clear();
+    await _transactions!.clear();
+  }
 }

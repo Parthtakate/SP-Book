@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'home_screen.dart';
 
@@ -22,6 +21,8 @@ class _AppLockScreenState extends State<AppLockScreen> {
 
   Future<void> _authenticate() async {
     bool authenticated = false;
+    bool skipLock = false;
+
     try {
       setState(() {
         _isAuthenticating = true;
@@ -31,27 +32,31 @@ class _AppLockScreenState extends State<AppLockScreen> {
       final bool canAuthenticate = canAuthenticateWithBiometrics || await auth.isDeviceSupported();
 
       if (!canAuthenticate) {
-        // Device doesn't support biometrics/PIN, skip lock
-        _navigateToHome();
+        skipLock = true;
         return;
       }
 
       authenticated = await auth.authenticate(
         localizedReason: 'Unlock Khata Book to access your data',
+        // options: const AuthenticationOptions( // Use options if package supports it, usually yes in 3.x
+        //   stickyAuth: true,
+        //   useErrorDialogs: true,
+        // ),
       );
-    } on PlatformException catch (e) {
-      debugPrint(e.toString());
-      authenticated = false;
+    } catch (e) {
+      debugPrint('Auth error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAuthenticating = false;
+        });
+      }
     }
 
     if (!mounted) return;
 
-    if (authenticated) {
+    if (authenticated || skipLock) {
       _navigateToHome();
-    } else {
-      setState(() {
-        _isAuthenticating = false;
-      });
     }
   }
 

@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
-import 'package:path/path.dart' as p;
 import '../../models/customer.dart';
 import '../../providers/transaction_provider.dart';
 
@@ -49,7 +48,8 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         await myImageDir.create(recursive: true);
       }
       
-      final fileExtension = p.extension(imageFile.path).isNotEmpty ? p.extension(imageFile.path) : '.jpg';
+      final pathLower = imageFile.path.toLowerCase();
+      final fileExtension = pathLower.contains('.') ? '.${pathLower.split('.').last}' : '.jpg';
       final newFileName = '${const Uuid().v4()}$fileExtension';
       final newFilePath = '$myImagePath/$newFileName';
       

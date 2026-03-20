@@ -4,21 +4,38 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/customer.dart';
+import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
 import '../transaction/add_transaction_screen.dart';
+import '../reminder/set_reminder_screen.dart';
+import '../reports/reports_screen.dart';
 
-final currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-final dateFormat = DateFormat('dd MMM yyyy, hh:mm a');
+final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
+final _timeFormat = DateFormat('hh:mm a');
+final _dateHeaderFormat = DateFormat('EEEE, d MMM yyyy');
+
+/// Groups a flat list of transactions into {date -> List[TransactionModel]} map.
+/// The map maintains insertion order (newest date first) because we sort by date descending.
+Map<String, List<TransactionModel>> _groupByDate(
+    List<TransactionModel> txns) {
+  final grouped = <String, List<TransactionModel>>{};
+  for (final t in txns) {
+    final key = DateFormat('yyyy-MM-dd').format(t.date);
+    grouped.putIfAbsent(key, () => []).add(t);
+  }
+  return grouped;
+}
 
 class CustomerDetailsScreen extends ConsumerWidget {
   final Customer customer;
 
   const CustomerDetailsScreen({super.key, required this.customer});
 
+  // ---- Image fullscreen ------------------------------------------------
   void _showImageFullscreen(BuildContext context, String imagePath) {
     showDialog(
       context: context,
-      builder: (context) => Dialog(
+      builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: EdgeInsets.zero,
         child: Stack(
@@ -26,10 +43,10 @@ class CustomerDetailsScreen extends ConsumerWidget {
           children: [
             InteractiveViewer(
               child: Image.file(
-                File(imagePath), 
-                fit: BoxFit.contain, 
-                width: double.infinity, 
-                height: double.infinity
+                File(imagePath),
+                fit: BoxFit.contain,
+                width: double.infinity,
+                height: double.infinity,
               ),
             ),
             Positioned(
@@ -37,7 +54,7 @@ class CustomerDetailsScreen extends ConsumerWidget {
               right: 20,
               child: IconButton(
                 icon: const Icon(Icons.close, color: Colors.white, size: 32),
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(ctx),
               ),
             ),
           ],
@@ -46,186 +63,693 @@ class CustomerDetailsScreen extends ConsumerWidget {
     );
   }
 
+  // ---- Actions ---------------------------------------------------------
+  Future<void> _callCustomer(BuildContext context) async {
+    if (customer.phone == null || customer.phone!.isEmpty) {
+      _showSnack(context, 'No phone number saved for this customer.');
+      return;
+    }
+    final url = Uri.parse('tel:${customer.phone}');
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    } else {
+      if (context.mounted) _showSnack(context, 'Could not open phone dialer.');
+    }
+  }
+
+  Future<void> _sendWhatsApp(BuildContext context, double balance) async {
+    if (customer.phone == null || customer.phone!.isEmpty) {
+      _showSnack(context, 'No phone number saved for this customer.');
+      return;
+    }
+    final msg =
+        'Hi ${customer.name}, your pending balance is ${_currency.format(balance.abs())}. Please clear it soon.';
+    final url = Uri.parse(
+        'whatsapp://send?phone=${customer.phone}&text=${Uri.encodeComponent(msg)}');
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url);
+    } else {
+      final smsUrl = Uri.parse(
+          'sms:${customer.phone}?body=${Uri.encodeComponent(msg)}');
+      if (await canLaunchUrl(smsUrl)) {
+        await launchUrl(smsUrl);
+      } else {
+        if (context.mounted) {
+          _showSnack(context, 'Could not open WhatsApp or SMS.');
+        }
+      }
+    }
+  }
+
+  void _showSnack(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  // ---- Build -----------------------------------------------------------
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final balance = ref.watch(customerBalanceProvider(customer.id));
     final transactions = ref.watch(customerTransactionsProvider(customer.id));
 
-    String balanceStatus = 'Settled Up';
-    Color balanceColor = Colors.grey;
-    if (balance > 0) {
-      balanceStatus = 'You will get';
-      balanceColor = Colors.green;
-    } else if (balance < 0) {
-      balanceStatus = 'You will give';
-      balanceColor = Colors.red;
-    }
+    final bool owesYou = balance > 0;
+    final bool youOwe = balance < 0;
+    final String balanceStatus = owesYou
+        ? 'You will get'
+        : youOwe
+            ? 'You will give'
+            : 'Settled Up';
+    final Color headerColor =
+        owesYou ? const Color(0xFF2E7D32) : youOwe ? const Color(0xFFC62828) : Colors.grey;
 
-    void sendReminder() async {
-      if (customer.phone == null || customer.phone!.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No phone number saved for this customer.')));
-        return;
-      }
-      
-      final message = 'Hi ${customer.name}, your pending balance is ${currencyFormat.format(balance.abs())}. Please clear it soon.';
-      final url = Uri.parse('whatsapp://send?phone=${customer.phone}&text=${Uri.encodeComponent(message)}');
-      
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url);
-      } else {
-        final smsUrl = Uri.parse('sms:${customer.phone}?body=${Uri.encodeComponent(message)}');
-        if (await canLaunchUrl(smsUrl)) {
-          await launchUrl(smsUrl);
-        } else {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open WhatsApp or SMS.')));
-          }
-        }
-      }
+    final grouped = _groupByDate(transactions);
+    // Build a flat list of items: header strings + transaction objects
+    final List<dynamic> flatList = [];
+    for (final entry in grouped.entries) {
+      flatList.add(entry.key); // date header
+      flatList.addAll(entry.value);
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(customer.name),
-      ),
+      backgroundColor: const Color(0xFFF5F7FA),
       body: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            color: balanceColor.withOpacity(0.1),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          balanceStatus,
-                          style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 16),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          currencyFormat.format(balance.abs()),
-                          style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 24),
-                        ),
-                      ],
-                    ),
-                    Icon(
-                      Icons.account_balance_wallet,
-                      size: 40,
-                      color: balanceColor,
-                    ),
-                  ],
-                ),
-                if (balance > 0) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: sendReminder,
-                      icon: const Icon(Icons.message),
-                      label: const Text('Send Reminder on WhatsApp'),
-                    ),
-                  ),
-                ],
-              ],
+          // ----------------------------------------------------------------
+          // Gradient header (replaces AppBar)
+          // ----------------------------------------------------------------
+          _GradientHeader(
+            customer: customer,
+            balance: balance,
+            balanceStatus: balanceStatus,
+            headerColor: headerColor,
+            onBack: () => Navigator.pop(context),
+            onCall: () => _callCustomer(context),
+            onReminder: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => SetReminderScreen(customer: customer),
+              ),
             ),
-          ),
-          
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text('All Transactions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            onReport: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ReportsScreen()),
             ),
+            onWhatsApp: () => _sendWhatsApp(context, balance),
+            showWhatsApp: owesYou,
           ),
-          
+
+          // ----------------------------------------------------------------
+          // Transaction list (grouped by date)
+          // ----------------------------------------------------------------
           Expanded(
             child: transactions.isEmpty
-                ? const Center(child: Text('No transactions yet.'))
+                ? const _EmptyTransactions()
                 : ListView.builder(
-                    itemCount: transactions.length,
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    itemCount: flatList.length,
                     itemBuilder: (context, index) {
-                      final t = transactions[index];
-                      return ListTile(
-                        leading: t.imagePath != null
-                          ? GestureDetector(
-                              onTap: () => _showImageFullscreen(context, t.imagePath!),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.file(
-                                  File(t.imagePath!), 
-                                  width: 40, 
-                                  height: 40, 
-                                  fit: BoxFit.cover,
-                                  cacheWidth: 120, // Forces Flutter to decode a tiny thumbnail, saving RAM
-                                ),
-                              ),
-                            )
-                          : const SizedBox(width: 40, child: Icon(Icons.receipt_long, color: Colors.grey)),
-                        title: Text(
-                          t.isGot ? 'You Got' : 'You Gave', 
-                          style: TextStyle(
-                            color: t.isGot ? Colors.green : Colors.red,
-                            fontWeight: FontWeight.bold
-                          )
-                        ),
-                        subtitle: Text('${dateFormat.format(t.date)}${t.note.isNotEmpty ? '\nNote: ${t.note}' : ''}'),
-                        isThreeLine: t.note.isNotEmpty,
-                        trailing: Text(
-                          currencyFormat.format(t.amount),
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      final item = flatList[index];
+                      if (item is String) {
+                        // Date header
+                        return _DateHeader(dateKey: item);
+                      }
+                      final t = item as TransactionModel;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _TransactionCard(
+                          transaction: t,
+                          onImageTap: t.imagePath != null
+                              ? () =>
+                                  _showImageFullscreen(context, t.imagePath!)
+                              : null,
+                          onDelete: () {
+                            ref
+                                .read(transactionServiceProvider)
+                                .deleteTransaction(t.id);
+                          },
                         ),
                       );
                     },
                   ),
           ),
 
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
+          // ----------------------------------------------------------------
+          // Bottom action bar
+          // ----------------------------------------------------------------
+          _BottomActionBar(
+            customer: customer,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gradient Header
+// ---------------------------------------------------------------------------
+
+class _GradientHeader extends StatelessWidget {
+  final Customer customer;
+  final double balance;
+  final String balanceStatus;
+  final Color headerColor;
+  final VoidCallback onBack;
+  final VoidCallback onCall;
+  final VoidCallback onReminder;
+  final VoidCallback onReport;
+  final VoidCallback onWhatsApp;
+  final bool showWhatsApp;
+
+  const _GradientHeader({
+    required this.customer,
+    required this.balance,
+    required this.balanceStatus,
+    required this.headerColor,
+    required this.onBack,
+    required this.onCall,
+    required this.onReminder,
+    required this.onReport,
+    required this.onWhatsApp,
+    required this.showWhatsApp,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            headerColor.withValues(alpha: 0.9),
+            headerColor,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            // Back + Title row
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
               child: Row(
                 children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => AddTransactionScreen(customer: customer, isGot: false)
-                        ));
-                      },
-                      child: const Text('🔴 YOU GAVE', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    onPressed: onBack,
                   ),
-                  const SizedBox(width: 16),
                   Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text(
+                      customer.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
                       ),
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(
-                          builder: (_) => AddTransactionScreen(customer: customer, isGot: true)
-                        ));
-                      },
-                      child: const Text('🟢 YOU GOT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
             ),
+
+            // Balance
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    balanceStatus,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _currency.format(balance.abs()),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Action row
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Row(
+                children: [
+                  _ActionButton(
+                    icon: Icons.bar_chart_rounded,
+                    label: 'Report',
+                    onTap: onReport,
+                  ),
+                  const SizedBox(width: 12),
+                  _ActionButton(
+                    icon: Icons.notifications_outlined,
+                    label: 'Reminder',
+                    onTap: onReminder,
+                  ),
+                  const SizedBox(width: 12),
+                  _ActionButton(
+                    icon: Icons.call_outlined,
+                    label: 'Call',
+                    onTap: onCall,
+                  ),
+                  if (showWhatsApp) ...[
+                    const SizedBox(width: 12),
+                    _ActionButton(
+                      icon: Icons.message_outlined,
+                      label: 'WhatsApp',
+                      onTap: onWhatsApp,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: Colors.white, size: 20),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Date Header
+// ---------------------------------------------------------------------------
+
+class _DateHeader extends StatelessWidget {
+  final String dateKey; // 'yyyy-MM-dd'
+  const _DateHeader({required this.dateKey});
+
+  @override
+  Widget build(BuildContext context) {
+    final date = DateTime.parse(dateKey);
+    final now = DateTime.now();
+    final String label;
+
+    if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day) {
+      label = 'Today';
+    } else if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day - 1) {
+      label = 'Yesterday';
+    } else {
+      label = _dateHeaderFormat.format(date);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12, bottom: 4),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Divider(color: Colors.grey.shade300, height: 1)),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transaction Card
+// ---------------------------------------------------------------------------
+
+class _TransactionCard extends StatelessWidget {
+  final TransactionModel transaction;
+  final VoidCallback? onImageTap;
+  final VoidCallback onDelete;
+
+  const _TransactionCard({
+    required this.transaction,
+    required this.onDelete,
+    this.onImageTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = transaction;
+    final isGot = t.isGot;
+
+    final Color tagColor =
+        isGot ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
+    final Color bgColor =
+        isGot ? const Color(0xFFF1F8F1) : const Color(0xFFFFF1F1);
+    final String typeLabel = isGot ? 'YOU GOT' : 'YOU GAVE';
+
+    return Dismissible(
+      key: Key(t.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        decoration: BoxDecoration(
+          color: Colors.red.shade100,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.delete_outline, color: Colors.red),
+      ),
+      confirmDismiss: (_) async {
+        return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: const Text('Delete Transaction?',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            content: const Text(
+                'This transaction will be permanently deleted.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('CANCEL'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('DELETE'),
+              ),
+            ],
+          ),
+        );
+      },
+      onDismissed: (_) => onDelete(),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Type badge
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  typeLabel,
+                  style: TextStyle(
+                    color: tagColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 10,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              // Note + time
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (t.note.isNotEmpty)
+                      Text(
+                        t.note,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: Colors.black87,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    const SizedBox(height: 3),
+                    Text(
+                      _timeFormat.format(t.date),
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 12),
+
+              // Amount + optional image thumbnail
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _currency.format(t.amount),
+                    style: TextStyle(
+                      color: tagColor,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  if (t.imagePath != null) ...[
+                    const SizedBox(height: 6),
+                    GestureDetector(
+                      onTap: onImageTap,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.file(
+                          File(t.imagePath!),
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.cover,
+                          cacheWidth: 108,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+class _EmptyTransactions extends StatelessWidget {
+  const _EmptyTransactions();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.receipt_long_outlined, size: 72, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          Text(
+            'No transactions yet',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Tap "YOU GAVE" or "YOU GOT"\nbelow to add the first entry.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bottom Action Bar
+// ---------------------------------------------------------------------------
+
+class _BottomActionBar extends StatelessWidget {
+  final Customer customer;
+  const _BottomActionBar({required this.customer});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.07),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: _BottomButton(
+                  label: 'YOU GAVE',
+                  icon: Icons.arrow_upward_rounded,
+                  color: const Color(0xFFC62828),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          AddTransactionScreen(customer: customer, isGot: false),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _BottomButton(
+                  label: 'YOU GOT',
+                  icon: Icons.arrow_downward_rounded,
+                  color: const Color(0xFF2E7D32),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          AddTransactionScreen(customer: customer, isGot: true),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _BottomButton({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton(
+      onPressed: onTap,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        elevation: 0,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
         ],
       ),

@@ -1,0 +1,4 @@
+﻿Analyzing khata_app...                                          
+
+  error - The getter 'valueOrNull' isn't defined for the type 'AsyncValue<User?>' - lib\providers\reminder_provider.dart:11:26 - undefined_getter
+
