@@ -407,13 +407,15 @@ class _DateHeader extends StatelessWidget {
     final now = DateTime.now();
     final String label;
 
+    final yesterday = now.subtract(const Duration(days: 1));
+
     if (date.year == now.year &&
         date.month == now.month &&
         date.day == now.day) {
       label = 'Today';
-    } else if (date.year == now.year &&
-        date.month == now.month &&
-        date.day == now.day - 1) {
+    } else if (date.year == yesterday.year &&
+        date.month == yesterday.month &&
+        date.day == yesterday.day) {
       label = 'Yesterday';
     } else {
       label = _dateHeaderFormat.format(date);

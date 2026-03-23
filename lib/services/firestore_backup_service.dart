@@ -74,7 +74,7 @@ class FirestoreBackupService {
     final uid = _uid;
 
     final customers = db.getAllCustomers();
-    final transactions = db.getAllCustomers()
+    final transactions = customers
         .expand((c) => db.getTransactionsForCustomer(c.id))
         .toList();
 
@@ -163,21 +163,12 @@ class FirestoreBackupService {
           .map((d) => TransactionModel.fromFirestore(d.data()))
           .toList();
 
-      final localIsEmpty = db.getAllCustomers().isEmpty;
-
       // ---- Clear local Hive before restoring to prevent stale/duplicate data
       await db.clearAll();
 
       // ---- Write all remote data to Hive (no conflict check needed after clear)
       for (final c in remoteCustomers) {
-        if (localIsEmpty) {
-          // First-time restore — write everything without conflict check
-          await db.saveCustomer(c);
-        } else {
-          // Normally we'd check timestamps, but since we cleared above,
-          // we always write. This variable is kept for future delta-sync.
-          await db.saveCustomer(c);
-        }
+        await db.saveCustomer(c);
       }
 
       for (final t in remoteTransactions) {

@@ -62,11 +62,12 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   }
 
   void _saveTransaction() async {
-    if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
-      
-      setState(() => _isLoading = true);
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    _formKey.currentState!.save();
+    
+    setState(() => _isLoading = true);
 
+    try {
       String? permanentImagePath;
       if (_selectedImage != null) {
         permanentImagePath = await _saveImagePermanently(_selectedImage!);
@@ -82,6 +83,16 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       
       if (mounted) {
         Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -114,7 +125,8 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                 style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) return 'Enter amount';
-                  if (double.tryParse(value) == null) return 'Enter valid amount';
+                  final amount = double.tryParse(value);
+                  if (amount == null || amount <= 0) return 'Enter a valid amount greater than ₹0';
                   return null;
                 },
                 onSaved: (value) => _amount = double.parse(value!),

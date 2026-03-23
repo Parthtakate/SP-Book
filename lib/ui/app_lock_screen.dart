@@ -33,6 +33,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
 
       if (!canAuthenticate) {
         skipLock = true;
+        if (mounted) _navigateToHome();
         return;
       }
 

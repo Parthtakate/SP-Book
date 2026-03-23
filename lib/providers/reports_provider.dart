@@ -75,7 +75,7 @@ final reportsProvider = Provider<ReportsSummary>((ref) {
     totalCredit += custCredit;
     totalDebit += custDebit;
 
-    final balance = custCredit - custDebit;
+    final balance = custDebit - custCredit;
     final lastDate = txns.isNotEmpty ? txns.first.date : null; // already sorted desc
 
     perCustomer.add(CustomerSummary(

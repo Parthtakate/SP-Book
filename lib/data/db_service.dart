@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:convert';
@@ -87,6 +88,11 @@ class DbService {
   }
 
   Future<void> deleteTransaction(String transactionId) async {
+    final txn = _transactions!.get(transactionId);
+    if (txn?.imagePath != null) {
+      final file = File(txn!.imagePath!);
+      if (await file.exists()) await file.delete();
+    }
     await _transactions!.delete(transactionId);
   }
 

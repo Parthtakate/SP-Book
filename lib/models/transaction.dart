@@ -30,7 +30,7 @@ class TransactionModel {
     'isGot': isGot,
     'note': note,
     'date': date.millisecondsSinceEpoch,
-    'imagePath': imagePath,
+    // 'imagePath': intentionally excluded, local device paths break upon cloud restore on new devices
     'updatedAt': FieldValue.serverTimestamp(),
   };
 
