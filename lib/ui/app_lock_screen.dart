@@ -75,7 +75,15 @@ class _AppLockScreenState extends State<AppLockScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.lock_outline, size: 80, color: Colors.white),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.asset(
+                'assets/images/logo.png',
+                width: 100,
+                height: 100,
+                fit: BoxFit.cover,
+              ),
+            ),
             const SizedBox(height: 24),
             const Text(
               'App Locked',

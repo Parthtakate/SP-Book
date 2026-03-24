@@ -46,6 +46,11 @@ class TransactionService {
     await ref.read(dbServiceProvider).deleteTransaction(transactionId);
     ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
   }
+
+  Future<void> updateTransaction(TransactionModel updatedTransaction) async {
+    await ref.read(dbServiceProvider).saveTransaction(updatedTransaction);
+    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+  }
 }
 
 final transactionServiceProvider = Provider<TransactionService>((ref) {

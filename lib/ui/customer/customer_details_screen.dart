@@ -6,9 +6,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/customer.dart';
 import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
-import '../transaction/add_transaction_screen.dart';
 import '../reminder/set_reminder_screen.dart';
 import '../reports/reports_screen.dart';
+import '../transaction/add_transaction_screen.dart';
+import '../../services/pdf_service.dart';
 
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _timeFormat = DateFormat('hh:mm a');
@@ -26,10 +27,17 @@ Map<String, List<TransactionModel>> _groupByDate(
   return grouped;
 }
 
-class CustomerDetailsScreen extends ConsumerWidget {
+class CustomerDetailsScreen extends ConsumerStatefulWidget {
   final Customer customer;
 
   const CustomerDetailsScreen({super.key, required this.customer});
+
+  @override
+  ConsumerState<CustomerDetailsScreen> createState() => _CustomerDetailsScreenState();
+}
+
+class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
+  DateTimeRange? _filterRange;
 
   // ---- Image fullscreen ------------------------------------------------
   void _showImageFullscreen(BuildContext context, String imagePath) {
@@ -65,11 +73,11 @@ class CustomerDetailsScreen extends ConsumerWidget {
 
   // ---- Actions ---------------------------------------------------------
   Future<void> _callCustomer(BuildContext context) async {
-    if (customer.phone == null || customer.phone!.isEmpty) {
+    if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
       _showSnack(context, 'No phone number saved for this customer.');
       return;
     }
-    final url = Uri.parse('tel:${customer.phone}');
+    final url = Uri.parse('tel:${widget.customer.phone}');
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     } else {
@@ -78,20 +86,20 @@ class CustomerDetailsScreen extends ConsumerWidget {
   }
 
   Future<void> _sendWhatsApp(BuildContext context, double balance) async {
-    if (customer.phone == null || customer.phone!.isEmpty) {
+    if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
       _showSnack(context, 'No phone number saved for this customer.');
       return;
     }
     final msg =
-        'Hi ${customer.name}, your pending balance is ${_currency.format(balance.abs())}. Please clear it soon.';
+        'Hi ${widget.customer.name}, your pending balance is ${_currency.format(balance.abs())}. Please clear it soon.';
     final url = Uri.parse(
-        'whatsapp://send?phone=${customer.phone}&text=${Uri.encodeComponent(msg)}');
+        'whatsapp://send?phone=${widget.customer.phone}&text=${Uri.encodeComponent(msg)}');
 
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     } else {
       final smsUrl = Uri.parse(
-          'sms:${customer.phone}?body=${Uri.encodeComponent(msg)}');
+          'sms:${widget.customer.phone}?body=${Uri.encodeComponent(msg)}');
       if (await canLaunchUrl(smsUrl)) {
         await launchUrl(smsUrl);
       } else {
@@ -114,9 +122,19 @@ class CustomerDetailsScreen extends ConsumerWidget {
 
   // ---- Build -----------------------------------------------------------
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final balance = ref.watch(customerBalanceProvider(customer.id));
-    final transactions = ref.watch(customerTransactionsProvider(customer.id));
+  Widget build(BuildContext context) {
+    final balance = ref.watch(customerBalanceProvider(widget.customer.id));
+    final transactions = ref.watch(customerTransactionsProvider(widget.customer.id));
+    
+    var filteredTransactions = transactions;
+    if (_filterRange != null) {
+      filteredTransactions = transactions.where((t) {
+        final date = DateTime(t.date.year, t.date.month, t.date.day);
+        final start = DateTime(_filterRange!.start.year, _filterRange!.start.month, _filterRange!.start.day);
+        final end = DateTime(_filterRange!.end.year, _filterRange!.end.month, _filterRange!.end.day);
+        return !date.isBefore(start) && !date.isAfter(end);
+      }).toList();
+    }
 
     final bool owesYou = balance > 0;
     final bool youOwe = balance < 0;
@@ -128,7 +146,7 @@ class CustomerDetailsScreen extends ConsumerWidget {
     final Color headerColor =
         owesYou ? const Color(0xFF2E7D32) : youOwe ? const Color(0xFFC62828) : Colors.grey;
 
-    final grouped = _groupByDate(transactions);
+    final grouped = _groupByDate(filteredTransactions);
     // Build a flat list of items: header strings + transaction objects
     final List<dynamic> flatList = [];
     for (final entry in grouped.entries) {
@@ -144,24 +162,98 @@ class CustomerDetailsScreen extends ConsumerWidget {
           // Gradient header (replaces AppBar)
           // ----------------------------------------------------------------
           _GradientHeader(
-            customer: customer,
+            customer: widget.customer,
             balance: balance,
             balanceStatus: balanceStatus,
             headerColor: headerColor,
+            isFiltered: _filterRange != null,
             onBack: () => Navigator.pop(context),
+            onFilter: () async {
+              if (_filterRange != null) {
+                // Clear filter
+                setState(() => _filterRange = null);
+                return;
+              }
+              final initialRange = DateTimeRange(
+                start: DateTime.now().subtract(const Duration(days: 30)),
+                end: DateTime.now(),
+              );
+              final picked = await showDateRangePicker(
+                context: context,
+                firstDate: DateTime(2000),
+                lastDate: DateTime.now().add(const Duration(days: 1)),
+                initialDateRange: initialRange,
+                builder: (context, child) {
+                  return Theme(
+                    data: Theme.of(context).copyWith(
+                      colorScheme: ColorScheme.light(
+                        primary: headerColor,
+                        onPrimary: Colors.white,
+                        onSurface: Colors.black,
+                      ),
+                    ),
+                    child: child!,
+                  );
+                },
+              );
+              if (picked != null) {
+                setState(() => _filterRange = picked);
+              }
+            },
             onCall: () => _callCustomer(context),
             onReminder: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => SetReminderScreen(customer: customer),
+                builder: (_) => SetReminderScreen(customer: widget.customer),
               ),
             ),
             onReport: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const ReportsScreen()),
             ),
+            onExportPdf: () async {
+              try {
+                // Show a brief snackbar
+                _showSnack(context, 'Generating PDF...');
+                await PdfService.generateAndShareCustomerStatement(
+                  customer: widget.customer,
+                  transactions: transactions,
+                  balance: balance,
+                );
+              } catch (e) {
+                if (context.mounted) _showSnack(context, 'Error generating PDF: $e');
+              }
+            },
             onWhatsApp: () => _sendWhatsApp(context, balance),
             showWhatsApp: owesYou,
+            onSettle: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Settle Balance?'),
+                  content: Text('This will add a ${balance > 0 ? "You Got" : "You Gave"} transaction of ${_currency.format(balance.abs())} to bring the balance to ₹0.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: headerColor,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => Navigator.pop(ctx, true), 
+                      child: const Text('SETTLE')
+                    ),
+                  ],
+                ),
+              );
+              if (confirm == true) {
+                ref.read(transactionServiceProvider).addTransaction(
+                  customerId: widget.customer.id,
+                  amount: balance.abs(),
+                  isGot: balance > 0,
+                  note: 'Balance Settled',
+                );
+              }
+            },
           ),
 
           // ----------------------------------------------------------------
@@ -193,6 +285,18 @@ class CustomerDetailsScreen extends ConsumerWidget {
                                 .read(transactionServiceProvider)
                                 .deleteTransaction(t.id);
                           },
+                          onEdit: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AddTransactionScreen(
+                                  customer: widget.customer,
+                                  isGot: t.isGot,
+                                  existingTransaction: t,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       );
                     },
@@ -203,7 +307,7 @@ class CustomerDetailsScreen extends ConsumerWidget {
           // Bottom action bar
           // ----------------------------------------------------------------
           _BottomActionBar(
-            customer: customer,
+            customer: widget.customer,
           ),
         ],
       ),
@@ -220,24 +324,32 @@ class _GradientHeader extends StatelessWidget {
   final double balance;
   final String balanceStatus;
   final Color headerColor;
+  final bool isFiltered;
   final VoidCallback onBack;
+  final VoidCallback onFilter;
   final VoidCallback onCall;
   final VoidCallback onReminder;
   final VoidCallback onReport;
+  final VoidCallback onExportPdf;
   final VoidCallback onWhatsApp;
   final bool showWhatsApp;
+  final VoidCallback onSettle;
 
   const _GradientHeader({
     required this.customer,
     required this.balance,
     required this.balanceStatus,
     required this.headerColor,
+    required this.isFiltered,
     required this.onBack,
+    required this.onFilter,
     required this.onCall,
     required this.onReminder,
     required this.onReport,
+    required this.onExportPdf,
     required this.onWhatsApp,
     required this.showWhatsApp,
+    required this.onSettle,
   });
 
   @override
@@ -278,6 +390,23 @@ class _GradientHeader extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  if (isFiltered)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text('Filtered', style: TextStyle(color: Colors.white, fontSize: 10)),
+                    ),
+                  IconButton(
+                    icon: Icon(
+                      isFiltered ? Icons.filter_alt_off : Icons.filter_alt,
+                      color: Colors.white,
+                    ),
+                    onPressed: onFilter,
+                  ),
                 ],
               ),
             ),
@@ -285,25 +414,44 @@ class _GradientHeader extends StatelessWidget {
             // Balance
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    balanceStatus,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        balanceStatus,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _currency.format(balance.abs()),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _currency.format(balance.abs()),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
+                  if (balance != 0)
+                    ElevatedButton.icon(
+                      onPressed: onSettle,
+                      icon: const Icon(Icons.handshake, size: 16),
+                      label: const Text('Settle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: headerColor,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        elevation: 0,
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -311,7 +459,8 @@ class _GradientHeader extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Action row
-            Padding(
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: Row(
                 children: [
@@ -319,6 +468,12 @@ class _GradientHeader extends StatelessWidget {
                     icon: Icons.bar_chart_rounded,
                     label: 'Report',
                     onTap: onReport,
+                  ),
+                  const SizedBox(width: 12),
+                  _ActionButton(
+                    icon: Icons.picture_as_pdf_outlined,
+                    label: 'Export',
+                    onTap: onExportPdf,
                   ),
                   const SizedBox(width: 12),
                   _ActionButton(
@@ -363,7 +518,9 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
+    return Container(
+      width: 70, // fixed width for single child scroll view constraints
+      margin: const EdgeInsets.only(right: 12),
       child: GestureDetector(
         onTap: onTap,
         child: Container(
@@ -456,10 +613,12 @@ class _TransactionCard extends StatelessWidget {
   final TransactionModel transaction;
   final VoidCallback? onImageTap;
   final VoidCallback onDelete;
+  final VoidCallback onEdit;
 
   const _TransactionCard({
     required this.transaction,
     required this.onDelete,
+    required this.onEdit,
     this.onImageTap,
   });
 
@@ -516,19 +675,22 @@ class _TransactionCard extends StatelessWidget {
         );
       },
       onDismissed: (_) => onDelete(),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Padding(
+      child: InkWell(
+        onTap: onEdit,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -610,12 +772,13 @@ class _TransactionCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ],
                 ],
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ),
+      ),
+      ),
       ),
     );
   }

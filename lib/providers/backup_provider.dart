@@ -10,6 +10,7 @@ enum BackupStatus {
   working,
   success,
   failedNoInternet,
+  failedTimeout,
   failedPermission,
   failedUnknown,
 }

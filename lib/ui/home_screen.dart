@@ -232,15 +232,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     return AppBar(
       title: Row(
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Center(
-              child: Text('📘', style: TextStyle(fontSize: 18)),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.asset(
+              'assets/images/logo.png',
+              width: 32,
+              height: 32,
+              fit: BoxFit.cover,
             ),
           ),
           const SizedBox(width: 10),

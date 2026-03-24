@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-import '../data/db_service.dart';
+import '../services/db_service.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 
@@ -48,17 +48,23 @@ class FirestoreBackupService {
 
   /// Checks internet connectivity before any Firestore operation.
   Future<void> _assertConnected() async {
+    // Stage 1: Fast fail if WiFi/mobile adapter is completely off
     try {
       final results = await Connectivity().checkConnectivity().timeout(
-        const Duration(seconds: 4),
-        onTimeout: () => throw TimeoutException('Connectivity check timed out'),
+        const Duration(seconds: 2),
       );
       if (results.isEmpty || results.every((r) => r == ConnectivityResult.none)) {
         throw NoInternetException();
       }
-    } on TimeoutException {
-      // If it times out, we assume it's offline to be safe, or we can let it pass and rely on Firestore timeout.
-      // Easiest is to throw NoInternetException.
+    } catch (_) {
+      // Ignore adapter timeout or false negatives, fail-safe to Stage 2
+    }
+
+    // Stage 2: Real internet reachability check
+    try {
+      final socket = await RawSocket.connect('8.8.8.8', 53, timeout: const Duration(seconds: 3));
+      socket.close();
+    } catch (_) {
       throw NoInternetException();
     }
   }
@@ -232,6 +238,10 @@ class FirestoreBackupService {
           const Duration(seconds: 30),
         );
         return; // Success, exit the loop
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') throw FirestorePermissionException();
+        // If it's a structural error that won't resolve, throw immediately
+        if (e.code == 'not-found' || e.code == 'unauthenticated') rethrow;
       } catch (e) {
         if (i == retries - 1) {
           throw FirestoreTimeoutException();

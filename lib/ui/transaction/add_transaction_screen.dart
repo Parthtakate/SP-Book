@@ -5,13 +5,15 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../models/customer.dart';
+import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
 
 class AddTransactionScreen extends ConsumerStatefulWidget {
   final Customer customer;
   final bool isGot;
+  final TransactionModel? existingTransaction;
 
-  const AddTransactionScreen({super.key, required this.customer, required this.isGot});
+  const AddTransactionScreen({super.key, required this.customer, required this.isGot, this.existingTransaction});
 
   @override
   ConsumerState<AddTransactionScreen> createState() => _AddTransactionScreenState();
@@ -23,6 +25,18 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   String _note = '';
   File? _selectedImage;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.existingTransaction != null) {
+      _amount = widget.existingTransaction!.amount;
+      _note = widget.existingTransaction!.note;
+      if (widget.existingTransaction!.imagePath != null) {
+        _selectedImage = File(widget.existingTransaction!.imagePath!);
+      }
+    }
+  }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -69,17 +83,33 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
 
     try {
       String? permanentImagePath;
-      if (_selectedImage != null) {
+      if (_selectedImage != null && _selectedImage!.path != widget.existingTransaction?.imagePath) {
         permanentImagePath = await _saveImagePermanently(_selectedImage!);
+      } else if (_selectedImage != null) {
+        permanentImagePath = _selectedImage!.path;
       }
 
-      await ref.read(transactionServiceProvider).addTransaction(
-        customerId: widget.customer.id,
-        amount: _amount,
-        isGot: widget.isGot,
-        note: _note,
-        imagePath: permanentImagePath,
-      );
+      if (widget.existingTransaction != null) {
+        final updatedTx = TransactionModel(
+          id: widget.existingTransaction!.id,
+          customerId: widget.existingTransaction!.customerId,
+          amount: _amount,
+          isGot: widget.isGot,
+          note: _note,
+          date: widget.existingTransaction!.date,
+          imagePath: permanentImagePath,
+          updatedAt: DateTime.now(),
+        );
+        await ref.read(transactionServiceProvider).updateTransaction(updatedTx);
+      } else {
+        await ref.read(transactionServiceProvider).addTransaction(
+          customerId: widget.customer.id,
+          amount: _amount,
+          isGot: widget.isGot,
+          note: _note,
+          imagePath: permanentImagePath,
+        );
+      }
       
       if (mounted) {
         Navigator.pop(context);
@@ -100,7 +130,9 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   @override
   Widget build(BuildContext context) {
     final color = widget.isGot ? Colors.green : Colors.red;
-    final title = widget.isGot ? 'You Got from ${widget.customer.name}' : 'You Gave to ${widget.customer.name}';
+    final title = widget.existingTransaction != null 
+        ? 'Edit Transaction' 
+        : widget.isGot ? 'You Got from ${widget.customer.name}' : 'You Gave to ${widget.customer.name}';
 
     return Scaffold(
       appBar: AppBar(
@@ -116,6 +148,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextFormField(
+                initialValue: widget.existingTransaction != null ? (widget.existingTransaction!.amount % 1 == 0 ? widget.existingTransaction!.amount.toInt().toString() : widget.existingTransaction!.amount.toString()) : null,
                 decoration: const InputDecoration(
                   labelText: 'Amount (₹)',
                   border: OutlineInputBorder(),
@@ -133,6 +166,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
               ),
               const SizedBox(height: 16),
               TextFormField(
+                initialValue: widget.existingTransaction?.note,
                 decoration: const InputDecoration(
                   labelText: 'Enter Details (Item Name, Bill No)',
                   border: OutlineInputBorder(),

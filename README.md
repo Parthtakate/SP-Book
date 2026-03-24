@@ -1,105 +1,58 @@
-# Khata App - Comprehensive Overview
+# Khata App (SP-Book)
 
-A professional, offline-first Ledger (Khata) management application built with **Flutter**. Designed to help users track balances, credit, and debit transactions ("You Got" / "You Gave"). It leverages high-performance encrypted local storage and cloud sync capabilities.
+A professional Ledger (Khata) management application built to help users seamlessly track balances, credit, and debit transactions ("You Got" / "You Gave") completely offline with secure cloud backup capabilities using Firebase.
+
+## 🛠️ Tech Stack From Scratch
+
+This project adopts a modern and scalable tech stack tailored for high performance on mobile devices.
+
+### 1. Frontend (UI & State)
+*   **Flutter (Dart)**: Used to build the cross-platform mobile UI. Provides native-level performance.
+*   **Riverpod (`flutter_riverpod`)**: Responsible for State Management. It bridges the UI with backend services asynchronously, ensuring the UI remains reactive to data changes.
+
+### 2. Backend & Cloud (Firebase Integration)
+*   **Firebase Authentication & Google Sign-In**: Handles secure user authentication (`auth_service.dart`).
+*   **Cloud Firestore (`cloud_firestore`)**: Works as our remote backend database to store encrypted backups (`firestore_backup_service.dart`). 
+
+### 3. Local Database & Security
+*   **Hive (`hive_flutter`)**: Our lightning-fast, NoSQL local database. This makes the app **Offline-First**, meaning all writes/reads happen locally under 1ms.
+*   **Flutter Secure Storage**: We encrypt the Hive boxes and store the 256-bit encryption key securely in the device's keystore/keychain.
+*   **Local Auth**: Integrates native biometrics (Fingerprint/FaceID) for locking the app (`app_lock_screen.dart`).
 
 ---
 
-## 🛠️ Tech Stack & Core Dependencies
-
--   **Framework**: Flutter (Dart SDK `>=3.10.4`)
--   **State Management**: `flutter_riverpod` (v3.3.1) with `@riverpod_annotation`
--   **Local Database**: `hive` (v2.2.3) + `hive_flutter`
--   **Secure Storage**: `flutter_secure_storage` (v10.0.0) — used for encryption keys
--   **Authentication**: `firebase_auth` (v5.5.2) + `google_sign_in` (v6.2.2)
--   **Cloud Database**: `cloud_firestore` (v5.6.6)
--   **Biometrics**: `local_auth` (v3.0.1) — App Lock feature
--   **Utilities**: `image_picker` (Attachments), `url_launcher` (WhatsApp reminding), `intl` (Formatting)
-
----
-
-## 🏗️ Architecture
+## 🏗️ How Each Component Connects (Architecture Overview)
 
 The application follows a **Modular Service-Provider Architecture**:
 
-1.  **UI Component Layer** (`lib/ui/`)
-    *   `HomeScreen`: Master dashboard display.
-    *   `SettingsScreen`: Google Login, Backup trigger, Biometrics toggle.
-    *   Sub-modules: `/customer`, `/transaction`, `/reminder`, `/reports`.
-2.  **State Management (Riverpod Providers)** (`lib/providers/`)
-    *   Provides high-level reactive controllers that the UI listens to for rendering state.
-    *   `AuthProvider`: Tracks user login status.
-    *   `BackupProvider`: Tracks "Backup in Progress" feedback.
-    *   `CustomerProvider` & `TransactionProvider`: Track lists and triggers CRUD on DB.
-3.  **Service / Data Layer** (`lib/services/`, `lib/data/`)
-    *   `DbService`: Handles low-level Hive box management, reading, and writing.
-    *   `FirestoreBackupService`: Orchestrates reading local Hive storage, formatting it for Firestore, and batch updates.
+1.  **The Entry Point (`lib/main.dart`)**: Initializes Firebase, Local Storage (Hive), and starts the Riverpod `ProviderScope`.
+2.  **Data Models (`lib/models/`)**: 
+    -   `customer.dart`, `transaction.dart`: These represent the exact schema stored directly in our local Hive database.
+3.  **The Services (`lib/services/`)**: 
+    -   `db_service.dart`: The brain of our local data. It opens encrypted Hive boxes, and provides functions to Add/Delete/Update Customers and Transactions.
+    -   `firestore_backup_service.dart`: Listens to user backup requests, fetches data from `db_service`, and pushes a secure JSON serialization into remote Cloud Firestore.
+    -   `reminder_service.dart` / `auth_service.dart`: Specialized workers for WhatsApp links and Google Logins.
+4.  **The Providers (`lib/providers/`)**: 
+    -   Files like `customer_provider.dart` or `transaction_provider.dart` sit between the UI and Services. They call `db_service.dart` functions and notify the UI to rebuild when data arrives or changes.
+5.  **The UI Screens (`lib/ui/`)**:
+    -   Screens ONLY talk to the **Providers**. For example, when adding a transaction in `transaction/`, the UI triggers `ref.read(transactionProvider.notifier).add(...)`. It waits for the provider, which talks to the service, updates the Hive database, and tells the UI "Data is ready!"
 
 ---
 
-## 🔒 Security & Safe-Storage
+## 🧹 File Directory Refactoring
 
-### 🔐 Database Encryption (Hive)
-To protect user ledger accounting logs from tampering on rooted/jailbroken devices:
--   **Secure Keys**: A 256-bit encryption key is generated at runtime via `Hive.generateSecureKey()` on first launch if not found.
--   **Keychain Injection**: Key gets encoded in base64 URL format and safely piped into `FlutterSecureStorage`.
--   **Encrypted Boxes**: Opened with an `HiveAesCipher` using the secured key.
-
-### 🔑 App Lock
--   Managed with `local_auth` for unlocking access.
--   Typically triggers an `AppLockScreen` overlay before allowing dashboard mounting.
+During analysis, we noticed the directory structure could be optimized:
+*   **Action Taken**: `lib/data/db_service.dart` was isolated. We **refactored** and moved it to `lib/services/db_service.dart` and deleted the empty `data` folder. 
+*   **Reasoning**: This consolidates all raw data logic into one unified `services` directory, simplifying import paths across the app. 
 
 ---
 
-## 📦 Data Models & Schema (Hive)
+## 🚀 What We Have To Implement Next
 
-### 👤 `Customer` (Type ID: 0)
-Represents a client or contact.
--   `id` (`String`): UUID (Standard lookup key).
--   `name` (`String`): Display name.
--   `phone` (`String?`): Optional contact number.
--   `createdAt` (`DateTime`): Initial creation timestamp.
--   **🚀 V3 Extension Field (Nullable)**:
-    -   `updatedAt` (`DateTime?`): Tracked updates for deterministic merging during Firestore conflict resolution.
+Based on our roadmap for KhataBook V2, here are the core features pending implementation:
 
-### 💰 `TransactionModel` (Type ID: 1)
-Represents a credit or debit.
--   `id` (`String`): UUID.
--   `customerId` (`String`): Foreign Key pointing to the Customer block.
--   `amount` (`double`): Magnitude.
--   `isGot` (`bool`): Direct operation classifier.
-    -   `true` = "You Got" (Received Money)
-    -   `false` = "You Gave" (Paid Money)
--   `note` (`String`): Supporting description (Default: `''`).
--   `date` (`DateTime`): Log datum.
--   `imagePath` (`String?`): Path to visual receipt or item receipt (Attachments).
--   **🚀 V3 Extension Field (Nullable)**:
-    -   `updatedAt` (`DateTime?`): Increments automatically on rewrite.
-
----
-
-## 🔄 Cloud Sync & Backup Workflow
-
-Managed by `FirestoreBackupService`:
-1.  Provides Google Sign-In with transparent Auth.
-2.  Data triggers batch-writes in Firestore (atomic uploads to prevent state inconsistencies).
-3.  Backups are tied to unique User UID references in Cloud Firestore.
-4.  Conflict updates resolve via the `.updatedAt` schema flags if present.
-
----
-
-## 🧩 Critical Edge Case Designs
-
-### 🧹 Cascading Delete
-In `DbService.deleteCustomer(id)`, deleting a customer **automatically deletes all related transactions** possessing the respective `customerId` to prevent dangling references leaking space or breaking reports.
-
-### 📐 String Format Handling
-Image Paths rely on localized storage addressing. Users backing up and restoring to another operating system might encounter dangling image addresses if not resolved absolute vs scoped relative correctly.
-
----
-
-## 🚀 Getting Started setup
-
-1.  Standard Flutter environment check (`flutter doctor`).
-2.  Fetch packages: `flutter pub get`.
-3.  Set up Firebase configuration on Android/iOS via `flutterfire configure`.
-4.  Ensure `firestore.rules` are deployed for strict user scope isolating writes strictly to `request.auth.uid`.
+1.  **PDF Statement Export**: Allow users to generate and share professional PDF logs for individual customers over a selected timeframe.
+2.  **Date-Range Filtering**: Implement UI and provider logic to filter transactions between "Start Date" and "End Date".
+3.  **Transaction Editing**: Add the long-press/tap-to-edit feature for transactions that have an existing `id`.
+4.  **Balance Settlement (Net Off)**: A quick button to settle down active balances, automatically inserting a clearing transaction.
+5.  **Improved Payment Reminders**: Deep link integration for WhatsApp/SMS reminder capabilities using dynamically generated localized string formats.
