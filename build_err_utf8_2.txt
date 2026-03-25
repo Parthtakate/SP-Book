@@ -1,0 +1,83 @@
+Running Gradle task 'assembleRelease'...                        
+flutter : lib/ui/custo
+mer/add_customer_scree
+n.dart:36:48: Error: 
+Member not found: 'Flu
+tterContacts.getContac
+ts'.
+At line:1 char:1
++ flutter build apk 
+--release > 
+build_err_2.txt 2>&1 
+; Get-Content buil ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (lib/ui/cus   
+ tomer...s.getCont    
+acts'.:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+        final 
+contacts = await Flutt
+erContacts.getContacts
+(withProperties: 
+true);
+                      
+                      
+   ^^^^^^^^^^^
+lib/ui/customer/add_cu
+stomer_screen.dart:97:
+47: Error: A value of 
+type 'String?' can't 
+be assigned to a 
+variable of type 
+'String'.
+              
+_nameController.text 
+= 
+selected.displayName;
+                      
+                      
+  ^
+Target kernel_snapshot
+_program failed: 
+Exception
+
+
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+Execution failed for 
+task ':app:compileFlut
+terBuildRelease'.
+> Process 'command 'C:
+\flutter\bin\flutter.b
+at'' finished with 
+non-zero exit value 1
+
+* Try:
+> Run with 
+--stacktrace option 
+to get the stack 
+trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at htt
+ps://help.gradle.org.
+
+BUILD FAILED in 25s
+Running Gradle task 'assembleRelease'...                           25.7s
+Gradle task 
+assembleRelease 
+failed with exit code 
+1

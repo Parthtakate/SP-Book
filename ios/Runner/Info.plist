@@ -14,6 +14,8 @@
 	<string>Khata Book needs camera access to let you attach photos of bills or receipts to your transactions.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Khata Book needs gallery access to let you attach photos of bills or receipts to your transactions.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Khata Book needs contacts access so you can easily import your customers' names and phone numbers.</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

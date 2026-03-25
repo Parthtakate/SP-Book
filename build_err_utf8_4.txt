@@ -1,0 +1,64 @@
+Running Gradle task 'assembleRelease'...                        
+flutter : lib/ui/custo
+mer/add_customer_scree
+n.dart:38:27: Error: 
+Member not found: 
+'photo'.
+At line:1 char:1
++ flutter build apk 
+--release > 
+build_err_4.txt 2>&1 
+; Get-Content buil ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (lib/ui/cus   
+ tomer...found: 'p    
+hoto'.:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+          
+ContactProperty.photo,
+                      
+    ^^^^^
+Target kernel_snapshot
+_program failed: 
+Exception
+
+
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+Execution failed for 
+task ':app:compileFlut
+terBuildRelease'.
+> Process 'command 'C:
+\flutter\bin\flutter.b
+at'' finished with 
+non-zero exit value 1
+
+* Try:
+> Run with 
+--stacktrace option 
+to get the stack 
+trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at htt
+ps://help.gradle.org.
+
+BUILD FAILED in 14s
+Running Gradle task 'assembleRelease'...                           14.9s
+Gradle task 
+assembleRelease 
+failed with exit code 
+1

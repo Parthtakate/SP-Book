@@ -1,0 +1,98 @@
+Running Gradle task 'assembleRelease'...                        
+flutter : lib/ui/custo
+mer/add_customer_scree
+n.dart:36:84: Error: 
+Member not found: 
+'phones'.
+At line:1 char:1
++ flutter build apk 
+--release > 
+build_err_3.txt 2>&1 
+; Get-Content buil ...
++ ~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~
+    + CategoryInfo    
+          : NotSpeci  
+  fied: (lib/ui/cus   
+ tomer...ound: 'ph    
+ones'.:String) []    
+, RemoteException
+    + FullyQualifiedE 
+   rrorId : NativeCo  
+  mmandError
+ 
+        final 
+contacts = await Flutt
+erContacts.getAll(prop
+erties: {ContactProper
+ty.phones});
+                      
+                      
+                      
+                 
+^^^^^^
+lib/ui/customer/add_cu
+stomer_screen.dart:81:
+86: Error: The 
+argument type 'Photo' 
+can't be assigned to 
+the parameter type 
+'Uint8List'.
+ - 'Photo' is from 'pa
+ckage:flutter_contacts
+/models/properties/pho
+to.dart' ('../../../..
+/AppData/Local/Pub/Cac
+he/hosted/pub.dev/flut
+ter_contacts-2.0.1/lib
+/models/properties/pho
+to.dart').
+ - 'Uint8List' is 
+from 
+'dart:typed_data'.
+                      
+            : CircleAv
+atar(backgroundImage: 
+MemoryImage(c.photo!))
+,
+                      
+                      
+                      
+                   ^
+Target kernel_snapshot
+_program failed: 
+Exception
+
+
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+Execution failed for 
+task ':app:compileFlut
+terBuildRelease'.
+> Process 'command 'C:
+\flutter\bin\flutter.b
+at'' finished with 
+non-zero exit value 1
+
+* Try:
+> Run with 
+--stacktrace option 
+to get the stack 
+trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at htt
+ps://help.gradle.org.
+
+BUILD FAILED in 14s
+Running Gradle task 'assembleRelease'...                           15.2s
+Gradle task 
+assembleRelease 
+failed with exit code 
+1
