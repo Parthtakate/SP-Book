@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/auth_provider.dart';
+import '../providers/db_provider.dart';
 import 'app_lock_screen.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
@@ -50,6 +51,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
     setState(() => _isSigningIn = true);
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
+      // Persist onboarding completion so the screen doesn't show again
+      await ref.read(dbServiceProvider).setOnboardingCompleted(true);
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const AppLockScreen()),
@@ -59,7 +62,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sign-in failed: ${e.toString()}'),
+            content: const Text('Sign-in failed. Please try again.'),
             backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
           ),
@@ -70,10 +73,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
     }
   }
 
-  void _skipLogin() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const AppLockScreen()),
-    );
+  void _skipLogin() async {
+    // Persist onboarding completion so the screen doesn't show again
+    await ref.read(dbServiceProvider).setOnboardingCompleted(true);
+    if (mounted) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const AppLockScreen()),
+      );
+    }
   }
 
   @override
@@ -139,7 +146,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
 
                           // Title
                           const Text(
-                            'Khata Book',
+                            'SPBOOKS',
                             style: TextStyle(
                               fontSize: 36,
                               fontWeight: FontWeight.bold,
@@ -207,7 +214,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
                                           'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
                                           width: 22,
                                           height: 22,
-                                          errorBuilder: (_, __, ___) =>
+                                          errorBuilder: (context, error, stackTrace) =>
                                               const Icon(Icons.login, size: 22),
                                         ),
                                         const SizedBox(width: 12),

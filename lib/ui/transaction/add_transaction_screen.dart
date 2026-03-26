@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -48,7 +49,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         });
       }
     } catch (e) {
-      debugPrint("Error picking image: $e");
+      if (kDebugMode) debugPrint("Error picking image: $e");
       // Could show a snackbar here for denied permissions
     }
   }
@@ -70,7 +71,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       final savedImage = await imageFile.copy(newFilePath);
       return savedImage.path;
     } catch (e) {
-      debugPrint("Error saving image: $e");
+      if (kDebugMode) debugPrint("Error saving image: $e");
       return null;
     }
   }
@@ -117,7 +118,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save: $e')),
+          const SnackBar(content: Text('Failed to save. Please try again.')),
         );
       }
     } finally {
@@ -167,12 +168,20 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
               const SizedBox(height: 16),
               TextFormField(
                 initialValue: widget.existingTransaction?.note,
+                maxLength: 200,
                 decoration: const InputDecoration(
                   labelText: 'Enter Details (Item Name, Bill No)',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.note),
                 ),
                 textCapitalization: TextCapitalization.sentences,
+                validator: (value) {
+                  final trimmed = value?.trim() ?? '';
+                  if (trimmed.length > 200) {
+                    return 'Details too long (max 200 characters).';
+                  }
+                  return null;
+                },
                 onSaved: (value) => _note = value?.trim() ?? '',
               ),
               const SizedBox(height: 24),

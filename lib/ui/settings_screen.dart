@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
@@ -73,7 +74,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.failedPermission);
     } catch (e, stack) {
-      debugPrint('Backup Error: $e\n$stack');
+      if (kDebugMode) debugPrint('Backup Error: $e\n$stack');
       ref
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.failedUnknown);
@@ -113,6 +114,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     try {
       final db = ref.read(dbServiceProvider);
       await ref.read(firestoreBackupServiceProvider).restoreAll(db);
+
+      // `restoreAll()` writes directly into Hive. Riverpod lists are driven
+      // by provider signals (`customersProvider` state and
+      // `anyTransactionChangeProvider`). Without explicitly invalidating /
+      // notifying, the UI may only refresh after a full app restart.
+      ref.invalidate(customersProvider);
+      ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+
       ref
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.success);
@@ -135,7 +144,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.failedPermission);
     } catch (e, stack) {
-      debugPrint('Restore Error: $e\n$stack');
+      if (kDebugMode) debugPrint('Restore Error: $e\n$stack');
       ref
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.failedUnknown);
@@ -159,6 +168,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 
   Future<void> _signOut() async {
     await ref.read(authServiceProvider).signOut();
+
+    // Clear local encrypted Hive data so the next sign-in starts fresh.
+    final db = ref.read(dbServiceProvider);
+    await db.clearAll();
+
+    // Reset onboarding flag so the login screen shows again for new users.
+    await db.setOnboardingCompleted(false);
+
+    // Force-refresh provider-driven UI lists/counters.
+    ref.invalidate(customersProvider);
+    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+
     ref.read(backupStatusProvider.notifier).updateStatus(BackupStatus.idle);
     ref.read(backupInfoProvider.notifier).setInfo(null);
   }
@@ -191,7 +212,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          const SnackBar(content: Text('Error generating report. Please try again.')),
         );
       }
     }
@@ -230,9 +251,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                   icon: const Icon(Icons.logout_rounded),
                   tooltip: 'Sign Out',
                   onPressed: () => userAsync.when(
-                    data: (u) => u != null ? _signOut() : null,
-                    loading: () => null,
-                    error: (_, __) => null,
+                    data: (u) {
+                      if (u != null) _signOut();
+                    },
+                    loading: () {},
+                    error: (error, stackTrace) {},
                   ),
                 ),
               ],
@@ -300,7 +323,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                     userAsync.when(
                       loading: () => const Center(
                           child: CircularProgressIndicator.adaptive()),
-                      error: (_, __) =>
+                      error: (error, stackTrace) =>
                           const Text('Error loading account.'),
                       data: (User? user) {
                         if (user == null) {
@@ -419,7 +442,7 @@ class _ProfileHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(20, 80, 20, 20),
       child: userAsync.when(
         loading: () => const SizedBox.shrink(),
-        error: (_, __) => const SizedBox.shrink(),
+        error: (error, stackTrace) => const SizedBox.shrink(),
         data: (User? user) {
           if (user == null) {
             return Column(

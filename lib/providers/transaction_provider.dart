@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/transaction.dart';
 import 'db_provider.dart';
+import '../services/firestore_sync_service.dart';
 
 final anyTransactionChangeProvider = NotifierProvider<AnyTransactionChangeNotifier, int>(() {
   return AnyTransactionChangeNotifier();
@@ -39,16 +40,32 @@ class TransactionService {
       imagePath: imagePath,
     );
     await ref.read(dbServiceProvider).saveTransaction(transaction);
+
+    // Incremental cloud sync: keeps transactions up to date.
+    await ref
+        .read(firestoreSyncServiceProvider)
+        .syncTransactionUpsert(transaction);
+
     ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
   }
 
   Future<void> deleteTransaction(String transactionId) async {
     await ref.read(dbServiceProvider).deleteTransaction(transactionId);
+
+    await ref
+        .read(firestoreSyncServiceProvider)
+        .syncTransactionDelete(transactionId);
+
     ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
   }
 
   Future<void> updateTransaction(TransactionModel updatedTransaction) async {
     await ref.read(dbServiceProvider).saveTransaction(updatedTransaction);
+
+    await ref
+        .read(firestoreSyncServiceProvider)
+        .syncTransactionUpsert(updatedTransaction);
+
     ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
   }
 }
@@ -82,19 +99,20 @@ final dashboardBalancesProvider = Provider<Map<String, double>>((ref) {
   
   double totalToReceive = 0;
   double totalToPay = 0;
-  
-  final customers = db.customersBox.values;
-  for (var customer in customers) {
-    final transactions = db.getTransactionsForCustomer(customer.id);
-    double customerBalance = 0;
-    for (var t in transactions) {
-      if (t.isGot) {
-        customerBalance -= t.amount;
-      } else {
-        customerBalance += t.amount;
-      }
-    }
-    
+
+  // Avoid N x "getTransactionsForCustomer" scans (slow on large datasets).
+  // Instead, compute each customer's balance in one pass over all transactions.
+  final Map<String, double> balanceByCustomer = {};
+  for (final t in db.transactionsBox.values) {
+    // Model convention used across the app:
+    // - t.isGot == true  -> decreases balance (debit(-))
+    // - t.isGot == false -> increases balance (credit(+))
+    final delta = t.isGot ? -t.amount : t.amount;
+    balanceByCustomer[t.customerId] =
+        (balanceByCustomer[t.customerId] ?? 0) + delta;
+  }
+
+  for (final customerBalance in balanceByCustomer.values) {
     if (customerBalance > 0) {
       totalToReceive += customerBalance;
     } else if (customerBalance < 0) {

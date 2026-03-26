@@ -8,9 +8,13 @@ import '../models/transaction.dart';
 class DbService {
   static const String _customersBox = 'customers_box';
   static const String _transactionsBox = 'transactions_box_v2';
+  static const String _settingsBox = 'settings_box';
+  static const String _syncQueueBox = 'sync_queue_box';
   
   static Box<Customer>? _customers;
   static Box<TransactionModel>? _transactions;
+  static Box? _settings;
+  static Box<String>? _syncQueue;
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -31,6 +35,16 @@ class DbService {
       _transactionsBox, 
       encryptionCipher: encryptionCipher
     );
+
+    // Settings box (unencrypted — stores simple flags like onboarding state)
+    _settings = await Hive.openBox(_settingsBox);
+
+    // Sync queue (unencrypted — stores small pending operation payloads)
+    // Encrypt queued ops too, so local storage doesn't leak ledger data.
+    _syncQueue = await Hive.openBox<String>(
+      _syncQueueBox,
+      encryptionCipher: encryptionCipher,
+    );
   }
 
   Future<HiveCipher?> _getEncryptionCipher() async {
@@ -49,7 +63,17 @@ class DbService {
       final encryptionKeyUint8List = base64Url.decode(keyString);
       return HiveAesCipher(encryptionKeyUint8List);
     }
-    return null;
+    // If we reach here, secure storage didn't contain the expected key.
+    // Failing closed prevents unencrypted local data from being stored.
+    throw StateError('Missing Hive encryption key in secure storage.');
+  }
+
+  // --- Settings ---
+  bool get hasCompletedOnboarding =>
+      _settings?.get('hasCompletedOnboarding', defaultValue: false) ?? false;
+
+  Future<void> setOnboardingCompleted(bool value) async {
+    await _settings?.put('hasCompletedOnboarding', value);
   }
 
   // --- Customers ---
@@ -98,7 +122,30 @@ class DbService {
 
   /// Clears ALL local data from both boxes. Called before a full restore.
   Future<void> clearAll() async {
+    // Delete any locally stored transaction images referenced by Hive.
+    final txns = _transactions?.values.toList() ?? const [];
+    for (final t in txns) {
+      final imagePath = t.imagePath;
+      if (imagePath == null || imagePath.isEmpty) continue;
+      try {
+        final file = File(imagePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // Best-effort cleanup: ignore failures.
+      }
+    }
     await _customers!.clear();
     await _transactions!.clear();
+
+    // Clear any pending cloud-sync operations to avoid replaying stale writes.
+    await _syncQueue?.clear();
+  }
+
+  Box<String> get syncQueueBox => _syncQueue!;
+
+  Future<void> clearSyncQueue() async {
+    await _syncQueue?.clear();
   }
 }

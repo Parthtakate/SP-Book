@@ -219,9 +219,12 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                   customer: widget.customer,
                   transactions: transactions,
                   balance: balance,
+                  dateRange: _filterRange,
                 );
               } catch (e) {
-                if (context.mounted) _showSnack(context, 'Error generating PDF: $e');
+                if (context.mounted) {
+                  _showSnack(context, 'Error generating PDF. Please try again.');
+                }
               }
             },
             onWhatsApp: () => _sendWhatsApp(context, balance),
@@ -260,7 +263,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
           // Transaction list (grouped by date)
           // ----------------------------------------------------------------
           Expanded(
-            child: transactions.isEmpty
+            child: filteredTransactions.isEmpty
                 ? const _EmptyTransactions()
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),

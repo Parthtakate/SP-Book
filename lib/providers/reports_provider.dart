@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import 'db_provider.dart';
 import 'transaction_provider.dart';
@@ -11,15 +12,22 @@ import 'transaction_provider.dart';
 class CustomerSummary {
   final String customerId;
   final String customerName;
-  final double balance;      // positive = they owe you, negative = you owe them
-  final double totalCredit;  // sum of isGot == true  (money received from customer)
-  final double totalDebit;   // sum of isGot == false (money given to customer)
+  final String? customerPhone;
+  // positive = you will get (customer owes you), negative = you will pay (you owe them)
+  final double balance;
+  // "Credit(+)" column in statement/table semantics within the active date range.
+  // Credit(+) increases running balance.
+  final double totalCredit;
+  // "Debit(-)" column in statement/table semantics within the active date range.
+  // Debit(-) decreases running balance.
+  final double totalDebit;
   final int transactionCount;
   final DateTime? lastTransactionDate;
 
   const CustomerSummary({
     required this.customerId,
     required this.customerName,
+    this.customerPhone,
     required this.balance,
     required this.totalCredit,
     required this.totalDebit,
@@ -30,18 +38,57 @@ class CustomerSummary {
 
 /// Top-level ledger summary.
 class ReportsSummary {
-  final double totalCredit;      // Sum of all isGot == true amounts
-  final double totalDebit;       // Sum of all isGot == false amounts
-  final double net;              // totalCredit - totalDebit
+  // Totals within the active date range only.
+  final double totalCredit; // Credit(+) increases balance
+  final double totalDebit; // Debit(-) decreases balance
+  // Net at the end of the active range (includes opening effects).
+  final double net;
+  final int totalEntries;
   final List<CustomerSummary> perCustomer;
 
   const ReportsSummary({
     required this.totalCredit,
     required this.totalDebit,
     required this.net,
+    required this.totalEntries,
     required this.perCustomer,
   });
 }
+
+/// Shared date filter for the Reports page.
+/// When `null`, reports are computed for ALL transactions (no opening/running slice).
+class ReportDateRangeNotifier extends Notifier<DateTimeRange?> {
+  @override
+  DateTimeRange? build() => null;
+
+  void setRange(DateTimeRange? range) {
+    state = range;
+  }
+
+  void clear() {
+    state = null;
+  }
+}
+
+final reportDateRangeProvider = NotifierProvider<ReportDateRangeNotifier, DateTimeRange?>(
+  ReportDateRangeNotifier.new,
+);
+
+/// Search text filter for the Reports page.
+class ReportSearchTextNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void update(String text) {
+    state = text;
+  }
+}
+
+final reportSearchTextProvider = NotifierProvider<ReportSearchTextNotifier, String>(
+  ReportSearchTextNotifier.new,
+);
+
+DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
 
 // ---------------------------------------------------------------------------
 // Provider — read-only aggregation over existing DbService
@@ -53,49 +100,119 @@ class ReportsSummary {
 final reportsProvider = Provider<ReportsSummary>((ref) {
   // React to any transaction change (existing CQRS change signal)
   ref.watch(anyTransactionChangeProvider);
+  final dateRange = ref.watch(reportDateRangeProvider);
+  final searchText = ref.watch(reportSearchTextProvider).trim().toLowerCase();
   final db = ref.watch(dbServiceProvider);
 
-  double totalCredit = 0;
-  double totalDebit = 0;
+  final bool hasRange = dateRange != null;
+  final startDay = hasRange ? _day(dateRange.start) : null;
+  final endDay = hasRange ? _day(dateRange.end) : null;
+
+  double totalCredit = 0; // Credit(+) within range only
+  double totalDebit = 0; // Debit(-) within range only
+  int totalEntries = 0;
   final List<CustomerSummary> perCustomer = [];
 
+  // Performance: group transactions once instead of calling
+  // `db.getTransactionsForCustomer()` for every customer.
+  final Map<String, List<TransactionModel>> txnsByCustomer = {};
+  for (final t in db.transactionsBox.values) {
+    txnsByCustomer.putIfAbsent(t.customerId, () => []).add(t);
+  }
+  for (final txns in txnsByCustomer.values) {
+    // Keep same descending order assumption used elsewhere:
+    // newest -> oldest.
+    txns.sort((a, b) => b.date.compareTo(a.date));
+  }
+
   for (final customer in db.getAllCustomers()) {
-    final txns = db.getTransactionsForCustomer(customer.id);
-    double custCredit = 0;
-    double custDebit = 0;
+    // Apply search filter
+    if (searchText.isNotEmpty &&
+        !customer.name.toLowerCase().contains(searchText)) {
+      continue;
+    }
+
+    final txns = txnsByCustomer[customer.id] ?? const <TransactionModel>[];
+
+    // Opening balances come from transactions strictly BEFORE the selected start day.
+    // In-range totals come from transactions inside [startDay..endDay] inclusive.
+    double openingCredit = 0; // credit(+) before start
+    double openingDebit = 0; // debit(-) before start
+    double inCredit = 0; // credit(+) inside range
+    double inDebit = 0; // debit(-) inside range
+
+    // Credit(+) increases balance.
+    // debit(-) decreases balance.
+    // With our current model:
+    // - t.isGot == true => balance decreases => debit(-)
+    // - t.isGot == false => balance increases => credit(+)
+    int inRangeCount = 0;
+    DateTime? lastTxnInRange; // txns are already sorted desc in DbService.
 
     for (final TransactionModel t in txns) {
-      if (t.isGot) {
-        custCredit += t.amount;
-      } else {
-        custDebit += t.amount;
+      final d = _day(t.date);
+
+      if (!hasRange) {
+        // All-time mode: treat everything as "inside the range" with opening=0.
+        if (t.isGot) {
+          inDebit += t.amount;
+        } else {
+          inCredit += t.amount;
+        }
+        inRangeCount++;
+        lastTxnInRange ??= t.date;
+        continue;
+      }
+
+      // Range mode: split into opening (< start) and in-range (<= end, >= start).
+      if (d.isBefore(startDay!)) {
+        if (t.isGot) {
+          openingDebit += t.amount;
+        } else {
+          openingCredit += t.amount;
+        }
+      } else if (!d.isAfter(endDay!)) {
+        // Inclusive in-range check: startDay <= d <= endDay
+        if (t.isGot) {
+          inDebit += t.amount;
+        } else {
+          inCredit += t.amount;
+        }
+        inRangeCount++;
+        lastTxnInRange ??= t.date;
       }
     }
 
-    totalCredit += custCredit;
-    totalDebit += custDebit;
+    final openingBalance = openingCredit - openingDebit;
+    final balanceEnd = openingBalance + (inCredit - inDebit);
 
-    final balance = custDebit - custCredit;
-    final lastDate = txns.isNotEmpty ? txns.first.date : null; // already sorted desc
+    totalCredit += inCredit;
+    totalDebit += inDebit;
+    totalEntries += inRangeCount;
 
     perCustomer.add(CustomerSummary(
       customerId: customer.id,
       customerName: customer.name,
-      balance: balance,
-      totalCredit: custCredit,
-      totalDebit: custDebit,
-      transactionCount: txns.length,
-      lastTransactionDate: lastDate,
+      customerPhone: customer.phone,
+      balance: balanceEnd,
+      totalCredit: inCredit,
+      totalDebit: inDebit,
+      transactionCount: inRangeCount,
+      lastTransactionDate: hasRange ? lastTxnInRange : (txns.isNotEmpty ? txns.first.date : null),
     ));
   }
 
-  // Sort by absolute balance descending so high-value customers appear at top
+  // Sort by absolute balance descending so high-value customers appear at top.
   perCustomer.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
+
+  // Net at the end of the selected range includes opening effects.
+  final net = perCustomer.fold<double>(0, (sum, c) => sum + c.balance);
 
   return ReportsSummary(
     totalCredit: totalCredit,
     totalDebit: totalDebit,
-    net: totalCredit - totalDebit,
+    net: net,
+    totalEntries: totalEntries,
     perCustomer: perCustomer,
   );
 });

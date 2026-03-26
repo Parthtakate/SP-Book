@@ -6,12 +6,21 @@ import 'services/db_service.dart';
 import 'providers/db_provider.dart';
 import 'ui/app_lock_screen.dart';
 import 'ui/onboarding_screen.dart';
+import 'services/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Firebase
   await Firebase.initializeApp();
+
+  // Best-effort restore of cached session (silent Google sign-in).
+  // This prevents "login not staying" issues after app relaunch.
+  try {
+    await AuthService().tryRestoreSessionSilently();
+  } catch (_) {
+    // Failing to restore silently should not break app startup.
+  }
 
   // Initialize local encrypted Hive database
   final dbService = DbService();
@@ -22,18 +31,19 @@ void main() async {
       overrides: [
         dbServiceProvider.overrideWithValue(dbService),
       ],
-      child: const KhataApp(),
+      child: KhataApp(dbService: dbService),
     ),
   );
 }
 
 class KhataApp extends StatelessWidget {
-  const KhataApp({super.key});
+  final DbService dbService;
+  const KhataApp({super.key, required this.dbService});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Khata Book',
+        title: 'SPBOOKS',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF005CEE),
@@ -41,15 +51,18 @@ class KhataApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'Roboto',
       ),
-      home: const _AuthGate(),
+      home: _AuthGate(dbService: dbService),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
 /// Shows OnboardingScreen to signed-out users, AppLockScreen to signed-in users.
+/// Checks the persisted `hasCompletedOnboarding` flag so that users who
+/// skipped login or already signed in don't see onboarding on every cold start.
 class _AuthGate extends StatelessWidget {
-  const _AuthGate();
+  final DbService dbService;
+  const _AuthGate({required this.dbService});
 
   @override
   Widget build(BuildContext context) {
@@ -68,13 +81,18 @@ class _AuthGate extends StatelessWidget {
 
         final user = snapshot.data;
 
-        if (user == null) {
-          // Not signed in → show onboarding
-          return const OnboardingScreen();
-        } else {
-          // Signed in → proceed to biometric lock then home
+        // User is signed in via Firebase → proceed directly
+        if (user != null) {
           return const AppLockScreen();
         }
+
+        // Not signed in, but previously completed onboarding (e.g. skipped) → proceed
+        if (dbService.hasCompletedOnboarding) {
+          return const AppLockScreen();
+        }
+
+        // First time user → show onboarding
+        return const OnboardingScreen();
       },
     );
   }

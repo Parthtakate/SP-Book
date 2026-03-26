@@ -72,12 +72,23 @@ class _SetReminderScreenState extends ConsumerState<SetReminderScreen> {
     setState(() => _isSaving = true);
 
     try {
+      final noteText = _noteController.text.trim();
+      if (noteText.length > 500) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Note is too long (max 500 characters).'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red.shade600,
+          ),
+        );
+        return;
+      }
       final reminder = ReminderModel(
         id: const Uuid().v4(),
         customerId: widget.customer.id,
         customerName: widget.customer.name,
         dueDate: _selectedDate!,
-        note: _noteController.text.trim(),
+        note: noteText,
         createdAt: DateTime.now(),
       );
 
@@ -108,7 +119,7 @@ class _SetReminderScreenState extends ConsumerState<SetReminderScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save reminder: $e'),
+            content: const Text('Failed to save reminder. Please try again.'),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.red.shade600,
           ),
@@ -263,6 +274,7 @@ class _SetReminderScreenState extends ConsumerState<SetReminderScreen> {
               ),
               child: TextField(
                 controller: _noteController,
+                maxLength: 500,
                 maxLines: 3,
                 decoration: InputDecoration(
                   hintText: 'Add a note (optional)…',

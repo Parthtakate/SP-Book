@@ -7,6 +7,7 @@ import '../providers/transaction_provider.dart';
 import '../providers/customer_last_transaction_provider.dart';
 import '../providers/db_provider.dart';
 import '../models/customer.dart';
+import '../services/firestore_sync_service.dart';
 import 'customer/add_customer_screen.dart';
 import 'customer/customer_details_screen.dart';
 import 'reports/reports_screen.dart';
@@ -46,6 +47,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // Delay the FAB entrance for a polished feel
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _fabAnimController.forward();
+    });
+
+    // On every app open, retry any pending cloud-sync operations first.
+    Future.microtask(() async {
+      await ref.read(firestoreSyncServiceProvider).flushPending();
     });
   }
 
@@ -243,7 +249,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           const SizedBox(width: 10),
           const Text(
-            'Khata Book',
+            'SPBOOKS',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
           ),
         ],

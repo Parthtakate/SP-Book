@@ -113,7 +113,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to load contacts: $e'),
+            content: const Text('Failed to load contacts. Please try again.'),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
@@ -298,7 +298,9 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                               validator: (value) =>
                                   value == null || value.trim().isEmpty
                                       ? 'Please enter a name'
-                                      : null,
+                                      : (value.trim().length > 100
+                                          ? 'Name is too long (max 100 characters).'
+                                          : null),
                             ),
                             const SizedBox(height: 16),
                             
@@ -329,8 +331,12 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                                 if (value == null || value.trim().isEmpty) {
                                   return 'Phone number is required';
                                 }
-                                if (value.trim().length < 6) {
+                                final trimmed = value.trim();
+                                if (trimmed.length < 6) {
                                   return 'Phone number is too short';
+                                }
+                                if (trimmed.length > 20) {
+                                  return 'Phone number is too long (max 20 characters).';
                                 }
                                 return null;
                               },

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:local_auth/local_auth.dart';
 import 'home_screen.dart';
 
@@ -38,14 +39,14 @@ class _AppLockScreenState extends State<AppLockScreen> {
       }
 
       authenticated = await auth.authenticate(
-        localizedReason: 'Unlock Khata Book to access your data',
+        localizedReason: 'Unlock SPBOOKS to access your data',
         // options: const AuthenticationOptions( // Use options if package supports it, usually yes in 3.x
         //   stickyAuth: true,
         //   useErrorDialogs: true,
         // ),
       );
     } catch (e) {
-      debugPrint('Auth error: $e');
+      if (kDebugMode) debugPrint('Auth error: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -91,7 +92,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Tap below to unlock your Khata Book',
+              'Tap below to unlock your SPBOOKS',
               style: TextStyle(fontSize: 14, color: Colors.white70),
             ),
             const SizedBox(height: 48),
