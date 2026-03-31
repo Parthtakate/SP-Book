@@ -11,14 +11,13 @@ import '../models/customer.dart';
 import '../models/transaction.dart';
 
 class PdfService {
-  static final _currencyFormat = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-  static final _dateFormat = DateFormat('d MMMM yyyy');
-  static final _dateRangeFormat = DateFormat('dd MMM yyyy');
+  static final _currencyFormat = NumberFormat.currency(
+    locale: 'en_IN',
+    symbol: '₹',
+  );
+  static final _dateFormat = DateFormat('dd MMM yyyy');
   static final _dateTimeFormat = DateFormat('dd MMM yyyy, hh:mm a');
-  static final _timeOnlyFormat = DateFormat('hh:mm a');
-  static final _dateOnlyFormat = DateFormat('dd MMM yyyy');
 
-  // Cache a rupee-capable TTF so PDFs render `₹` correctly.
   static Future<pw.Font>? _pdfBaseFontFuture;
   static Future<pw.Font> _getPdfFont() {
     _pdfBaseFontFuture ??= () async {
@@ -28,31 +27,33 @@ class PdfService {
     return _pdfBaseFontFuture!;
   }
 
-  // ---- Colors ----
-  static const _brandBlue = PdfColor.fromInt(0xFF1565C0);
-  static const _darkBlue = PdfColor.fromInt(0xFF0D47A1);
-  static const _lightRedBg = PdfColor.fromInt(0xFFFFF0F0);
-  static const _lightGreenBg = PdfColor.fromInt(0xFFF0FFF0);
-  static const _redText = PdfColor.fromInt(0xFFC62828);
-  static const _greenText = PdfColor.fromInt(0xFF2E7D32);
-  static const _headerGrey = PdfColor.fromInt(0xFFF0F0F0);
+  // ---- Professional, Print-Friendly Colors ----
+  static const _textBlack = PdfColors.black;
+  static const _textGrey = PdfColor.fromInt(0xFF616161);
+  static const _borderGrey = PdfColor.fromInt(0xFFE0E0E0);
+  static const _bgLightGrey = PdfColor.fromInt(0xFFF5F5F5);
+  static const _bgHeaderGrey = PdfColor.fromInt(0xFFE8E8E8); // Slightly darker for table header
+  
+  static const _greenColor = PdfColor.fromInt(0xFF2E7D32); // You will get / You Got / Received
+  static const _redColor = PdfColor.fromInt(0xFFC62828); // You will give / You Gave / Given
 
   // =========================================================================
-  // Individual Customer Statement (unchanged logic, same as before)
+  // 1. INDIVIDUAL CUSTOMER STATEMENT (LEDGER REPORT)
   // =========================================================================
-
   static Future<void> generateAndShareCustomerStatement({
     required Customer customer,
     required List<TransactionModel> transactions,
     required double balance,
     DateTimeRange? dateRange,
+    String businessName = 'SPBOOKS', // Can be parameterized later
+    String? businessPhone,
   }) async {
     final font = await _getPdfFont();
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(base: font, bold: font),
     );
 
-    // For running balance we need chronological order (oldest -> newest).
+    // Sort oldest to newest for accurate running balance
     final sortedTxsAsc = List<TransactionModel>.from(transactions)
       ..sort((a, b) => a.date.compareTo(b.date));
 
@@ -61,8 +62,8 @@ class PdfService {
     final endDay = hasRange ? _day(dateRange.end) : null;
 
     double openingBalance = 0;
-    double totalDebitMinus = 0;
-    double totalCreditPlus = 0;
+    double totalYouGave = 0; // Money given out
+    double totalYouGot = 0;  // Money received
     final List<TransactionModel> inRangeTxs = [];
 
     for (final t in sortedTxsAsc) {
@@ -70,9 +71,9 @@ class PdfService {
       if (!hasRange) {
         inRangeTxs.add(t);
         if (t.isGot) {
-          totalDebitMinus += t.amount;
+          totalYouGot += t.amount;
         } else {
-          totalCreditPlus += t.amount;
+          totalYouGave += t.amount;
         }
         continue;
       }
@@ -82,129 +83,48 @@ class PdfService {
       } else if (!d.isAfter(endDay!)) {
         inRangeTxs.add(t);
         if (t.isGot) {
-          totalDebitMinus += t.amount;
+          totalYouGot += t.amount;
         } else {
-          totalCreditPlus += t.amount;
+          totalYouGave += t.amount;
         }
       }
     }
 
-    final double endBalance = hasRange
-        ? openingBalance + (totalCreditPlus - totalDebitMinus)
+    final double finalBalance = hasRange
+        ? openingBalance + (totalYouGave - totalYouGot)
         : balance;
 
-    double runningBalance = openingBalance;
-
-    final List<List<String>> tableRows = [
-      ['', 'Opening Balance', '', '', _formatBalance(openingBalance)],
-    ];
-
-    for (final t in inRangeTxs) {
-      final debitMinus = t.isGot ? t.amount : 0.0;
-      final creditPlus = t.isGot ? 0.0 : t.amount;
-      runningBalance += creditPlus - debitMinus;
-
-      tableRows.add([
-        _dateFormat.format(t.date),
-        t.note.isEmpty ? '-' : t.note,
-        debitMinus > 0 ? _currencyFormat.format(debitMinus) : '',
-        creditPlus > 0 ? _currencyFormat.format(creditPlus) : '',
-        _formatBalance(runningBalance),
-      ]);
-    }
-
     final String rangeLabel = hasRange
-        ? '${_dateRangeFormat.format(startDay!)} - ${_dateRangeFormat.format(endDay!)}'
-        : 'All';
+        ? '${_dateFormat.format(startDay!)} to ${_dateFormat.format(endDay!)}'
+        : 'All Time';
 
-    final String netLabel = endBalance > 0
-        ? '(Part will get)'
-        : endBalance < 0
-            ? '(Part will give)'
-            : '(Settled)';
-
+    // Build PDF Document
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(18),
+        margin: const pw.EdgeInsets.all(32),
+        footer: (context) => _buildFooter(context),
         build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              // Top bar
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                color: _brandBlue,
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      customer.phone != null && customer.phone!.isNotEmpty
-                          ? customer.phone!
-                          : customer.name,
-                      style: pw.TextStyle(fontSize: 10, color: PdfColors.white),
-                    ),
-                    pw.Text(
-                      'SPBOOKS',
-                      style: pw.TextStyle(
-                        fontSize: 12,
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Center(
-                child: pw.Text(
-                  'Party Statement',
-                  style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
-                ),
-              ),
-              pw.SizedBox(height: 6),
-              pw.Text('Party Name: ${customer.name}', style: pw.TextStyle(fontSize: 12)),
-              if (customer.phone != null && customer.phone!.isNotEmpty)
-                pw.Text('Phone Number: ${customer.phone}', style: pw.TextStyle(fontSize: 11)),
-              pw.SizedBox(height: 4),
-              pw.Text('Date: ($rangeLabel)',
-                  style: pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
-              pw.SizedBox(height: 12),
-              _statementSummaryBox(
-                openingBalance: openingBalance,
-                totalDebitMinus: totalDebitMinus,
-                totalCreditPlus: totalCreditPlus,
-                endBalance: endBalance,
-                netLabel: netLabel,
-              ),
-              pw.SizedBox(height: 10),
-              pw.TableHelper.fromTextArray(
-                context: context,
-                headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  color: PdfColors.white,
-                  fontSize: 9,
-                ),
-                headerDecoration: const pw.BoxDecoration(color: PdfColors.grey600),
-                cellStyle: const pw.TextStyle(fontSize: 9),
-                cellAlignment: pw.Alignment.centerLeft,
-                data: [
-                  ['Date', 'Details', 'Debit(-)', 'Credit(+)', 'Balance'],
-                  ...tableRows,
-                ],
-              ),
-              pw.Spacer(),
-              pw.Text(
-                'No. of Entries: ${inRangeTxs.length} (${hasRange ? 'Filtered' : 'All'})',
-                style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
-              ),
-              pw.SizedBox(height: 4),
-              pw.Text(
-                'Report Generated: ${_dateTimeFormat.format(DateTime.now())}',
-                style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
-              ),
-            ],
-          );
+          return [
+            // 1. HEADER (Business Details)
+            _buildBusinessHeader(businessName, businessPhone, 'Customer Statement', rangeLabel, entriesCount: inRangeTxs.length),
+            pw.SizedBox(height: 20),
+
+            // 2. CUSTOMER DETAILS
+            _buildCustomerDetails(customer),
+            pw.SizedBox(height: 16),
+
+            // 3. SUMMARY CARD
+            _buildStatementSummary(openingBalance, totalYouGave, totalYouGot, finalBalance),
+            pw.SizedBox(height: 24),
+
+            // 4. TRANSACTION TABLE
+            _buildTransactionsTable(inRangeTxs, openingBalance),
+            pw.SizedBox(height: 40),
+
+            // 5. SIGNATURE SECTION
+            _buildSignatureSection(customer.name),
+          ];
         },
       ),
     );
@@ -214,44 +134,40 @@ class PdfService {
         ? '${_shortDay(startDay!)}_to_${_shortDay(endDay!)}'
         : 'all';
     final file = File(
-      '${output.path}/spbooks_statement_${customer.name.replaceAll(' ', '_')}_$suffix.pdf',
+      '${output.path}/statement_${customer.name.replaceAll(' ', '_')}_$suffix.pdf',
     );
     await file.writeAsBytes(await pdf.save());
 
     // ignore: deprecated_member_use
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      text: 'SPBOOKS Party Statement for ${customer.name}',
-    );
+    await Share.shareXFiles([
+      XFile(file.path),
+    ], text: 'Ledger Statement for ${customer.name}');
   }
 
   // =========================================================================
-  // Customer List Report (NEW format — global report)
+  // 2. CUSTOMER LIST REPORT (GLOBAL REPORT)
   // =========================================================================
-
-  /// Generates a "Customer List Report" PDF and returns the file path.
-  /// The PDF follows a formal document format with header/footer branding,
-  /// summary cards, colored data table, and pagination.
   static Future<String?> generateCustomerListReportPdf({
     required List<Customer> customers,
     required Map<String, List<TransactionModel>> transactionsByCustomer,
     required double totalToReceive,
     required double totalToPay,
     DateTimeRange? dateRange,
+    String businessName = 'SPBOOKS',
   }) async {
     final font = await _getPdfFont();
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(base: font, bold: font),
     );
-    final now = DateTime.now();
-    final netBalance = totalToReceive - totalToPay;
-
+    
     final bool hasRange = dateRange != null;
-    final startDay = dateRange != null ? _day(dateRange.start) : null;
-    final endDay = dateRange != null ? _day(dateRange.end) : null;
+    final startDay = hasRange ? _day(dateRange.start) : null;
+    final endDay = hasRange ? _day(dateRange.end) : null;
 
-    // Prepare customer data rows
     final List<_CustomerReportRow> rows = [];
+    double grandTotalGet = 0;
+    double grandTotalGive = 0;
+
     for (final customer in customers) {
       final allTxns = transactionsByCustomer[customer.id] ?? [];
       if (allTxns.isEmpty) continue;
@@ -264,181 +180,69 @@ class PdfService {
           : allTxns;
       if (txns.isEmpty) continue;
 
-      double youllGet = 0;
-      double youllGive = 0;
-      DateTime? lastDate;
+      double youGave = 0;
+      double youGot = 0;
 
       for (final t in txns) {
         if (t.isGot) {
-          youllGive += t.amount; // You got money → you'll give (debit)
+          youGot += t.amount;
         } else {
-          youllGet += t.amount; // You gave money → you'll get (credit)
+          youGave += t.amount;
         }
       }
 
-      // Calculate net balance per customer
-      final customerBalance = youllGet - youllGive;
+      final customerBalance = youGave - youGot;
+      final willGet = customerBalance > 0 ? customerBalance : 0.0;
+      final willGive = customerBalance < 0 ? customerBalance.abs() : 0.0;
 
-      // Find last transaction date (for collection date)
-      final sortedTxns = List<TransactionModel>.from(txns)
-        ..sort((a, b) => b.date.compareTo(a.date));
-      lastDate = sortedTxns.first.date;
+      grandTotalGet += willGet;
+      grandTotalGive += willGive;
 
-      rows.add(_CustomerReportRow(
-        name: customer.name,
-        phone: customer.phone ?? '',
-        youllGet: customerBalance > 0 ? customerBalance : 0,
-        youllGive: customerBalance < 0 ? customerBalance.abs() : 0,
-        collectionDate: lastDate,
-      ));
+      rows.add(
+        _CustomerReportRow(
+          name: customer.name,
+          phone: customer.phone ?? '-',
+          willGet: willGet,
+          willGive: willGive,
+        ),
+      );
     }
 
-    // Calculate grand totals
-    double grandTotalGet = 0;
-    double grandTotalGive = 0;
-    for (final r in rows) {
-      grandTotalGet += r.youllGet;
-      grandTotalGive += r.youllGive;
-    }
+    final double netBalance = grandTotalGet - grandTotalGive;
+    final String rangeLabel = hasRange
+        ? '${_dateFormat.format(startDay!)} to ${_dateFormat.format(endDay!)}'
+        : 'All Time';
 
-    final String netSuffix = netBalance >= 0 ? 'Dr' : 'Cr';
-
-    // Build the PDF with MultiPage for proper pagination
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(0),
-        header: (pw.Context context) {
-          return pw.Container(
-            padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: _darkBlue,
-            child: pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-              children: [
-                pw.Text(
-                  '',
-                  style: pw.TextStyle(fontSize: 10, color: PdfColors.white),
-                ),
-                pw.Text(
-                  'SPBOOKS',
-                  style: pw.TextStyle(
-                    fontSize: 12,
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.white,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-        footer: (pw.Context context) {
-          return pw.Column(
-            children: [
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'Report Generated : ${_timeOnlyFormat.format(now)} | ${_dateOnlyFormat.format(now)}',
-                      style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
-                    ),
-                    pw.Text(
-                      'Page ${context.pageNumber} of ${context.pagesCount}',
-                      style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
-                    ),
-                  ],
-                ),
-              ),
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                color: _darkBlue,
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.center,
-                  children: [
-                    pw.Text(
-                      'SPBOOKS - Digital Ledger',
-                      style: pw.TextStyle(
-                        fontSize: 9,
-                        color: PdfColors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-        },
+        margin: const pw.EdgeInsets.all(32),
+        footer: (context) => _buildFooter(context),
         build: (pw.Context context) {
           return [
-            pw.Padding(
-              padding: const pw.EdgeInsets.fromLTRB(24, 16, 24, 0),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-                children: [
-                  // Title
-                  pw.Center(
-                    child: pw.Text(
-                      'Customer List Report',
-                      style: pw.TextStyle(
-                        fontSize: 20,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(height: 4),
-                  pw.Center(
-                    child: pw.Text(
-                      '(As of Today - ${_dateFormat.format(now)})',
-                      style: pw.TextStyle(
-                        fontSize: 11,
-                        color: PdfColors.grey700,
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(height: 16),
+            _buildBusinessHeader(businessName, null, 'Customer Ledger Summary', rangeLabel, entriesCount: rows.length),
+            pw.SizedBox(height: 20),
+            
+            // Global Summary Card
+            _buildGlobalSummary(grandTotalGet, grandTotalGive, netBalance),
+            pw.SizedBox(height: 24),
 
-                  // Summary Cards Row
-                  pw.Row(
-                    children: [
-                      _summaryCard(
-                        "You'll Get",
-                        _currencyFormat.format(totalToReceive),
-                        _greenText,
-                      ),
-                      pw.SizedBox(width: 8),
-                      _summaryCard(
-                        "You'll Give",
-                        _currencyFormat.format(totalToPay),
-                        _redText,
-                      ),
-                      pw.SizedBox(width: 8),
-                      _summaryCard(
-                        'Net Balance',
-                        '${_currencyFormat.format(netBalance.abs())} $netSuffix',
-                        netBalance >= 0 ? _greenText : _redText,
-                      ),
-                    ],
-                  ),
-                  pw.SizedBox(height: 16),
-
-                  // Data Table
-                  _buildCustomerTable(rows, grandTotalGet, grandTotalGive),
-                ],
-              ),
-            ),
+            // Customer List Table
+            _buildCustomerListTable(rows, grandTotalGet, grandTotalGive),
           ];
         },
       ),
     );
 
     final output = await getTemporaryDirectory();
-    final file = File('${output.path}/spbooks_customer_list_report.pdf');
+    final file = File('${output.path}/customer_ledger_summary.pdf');
     await file.writeAsBytes(await pdf.save());
     return file.path;
   }
 
-  /// Convenience method — generate + share in one call (used from other screens).
+  // =========================================================================
+  // 3. LEGACY WRAPPERS
+  // =========================================================================
   static Future<void> generateAndShareFullReportStatements({
     required List<Customer> customers,
     required Map<String, List<TransactionModel>> transactionsByCustomer,
@@ -456,20 +260,15 @@ class PdfService {
     if (filePath == null) return;
 
     // ignore: deprecated_member_use
-    await Share.shareXFiles(
-      [XFile(filePath)],
-      text: 'SPBOOKS Customer List Report',
-    );
+    await Share.shareXFiles([XFile(filePath)], text: 'Customer Ledger Summary');
   }
 
-  /// Legacy full report (kept for backward compat with settings_screen export).
   static Future<void> generateAndShareFullReport({
     required List<dynamic> customers,
     required Map<String, List<dynamic>> transactionsByCustomer,
     required double totalToReceive,
     required double totalToPay,
   }) async {
-    // Delegate to the new format
     final castCustomers = customers.cast<Customer>();
     final castTxns = transactionsByCustomer.map(
       (k, v) => MapEntry(k, v.cast<TransactionModel>()),
@@ -483,99 +282,156 @@ class PdfService {
   }
 
   // =========================================================================
-  // Private Helpers
+  // COMPONENT BUILDERS (UI)
   // =========================================================================
 
-  static DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
-
-  static String _shortDay(DateTime d) => DateFormat('ddMMyyyy').format(d);
-
-  static String _formatBalance(double value) {
-    final abs = value.abs();
-    if (abs < 0.000001) return _currencyFormat.format(0);
-    final drcr = value >= 0 ? 'Cr' : 'Dr';
-    return '${_currencyFormat.format(abs)} $drcr';
-  }
-
-  static pw.Widget _statementSummaryBox({
-    required double openingBalance,
-    required double totalDebitMinus,
-    required double totalCreditPlus,
-    required double endBalance,
-    required String netLabel,
-  }) {
-    pw.Widget col(String header, pw.Widget value, {String? subHeader}) {
-      return pw.Expanded(
-        child: pw.Column(
+  static pw.Widget _buildBusinessHeader(String name, String? phone, String title, String rangeLabel, {int? entriesCount}) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(header, style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-            pw.SizedBox(height: 2),
-            value,
-            if (subHeader != null) ...[
-              pw.SizedBox(height: 2),
-              pw.Text(subHeader, style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-            ]
-          ],
-        ),
-      );
-    }
-
-    pw.Widget divider = pw.Container(
-      width: 1,
-      margin: const pw.EdgeInsets.symmetric(horizontal: 10),
-      height: 56,
-      color: PdfColors.grey300,
-    );
-
-    return pw.Container(
-      padding: const pw.EdgeInsets.all(10),
-      decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.grey300),
-        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-      ),
-      child: pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          col(
-            'Opening Balance',
-            pw.Text(
-              _formatBalance(openingBalance),
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-            ),
-          ),
-          divider,
-          col(
-            'Total Debit(-)',
-            pw.Text(
-              _currencyFormat.format(totalDebitMinus),
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-            ),
-          ),
-          divider,
-          col(
-            'Total Credit(+)',
-            pw.Text(
-              _currencyFormat.format(totalCreditPlus),
-              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
-            ),
-          ),
-          divider,
-          pw.Expanded(
-            child: pw.Column(
+            pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Text('Net Balance',
-                    style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-                pw.SizedBox(height: 2),
                 pw.Text(
-                  _formatBalance(endBalance),
-                  style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+                  name.toUpperCase(),
+                  style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold, color: _textBlack),
                 ),
-                pw.SizedBox(height: 2),
-                pw.Text(netLabel,
-                    style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700)),
-              ],
+                if (phone != null && phone.isNotEmpty)
+                  pw.Text('Phone: $phone', style: pw.TextStyle(fontSize: 12, color: _textGrey)),
+              ]
+            ),
+             pw.Column(
+               crossAxisAlignment: pw.CrossAxisAlignment.end,
+               children: [
+                 pw.Text('Generated on: ${_dateFormat.format(DateTime.now())}', style: pw.TextStyle(fontSize: 10, color: _textGrey)),
+               ]
+            )
+          ]
+        ),
+        pw.SizedBox(height: 12),
+        pw.Divider(color: _borderGrey, thickness: 1),
+        pw.SizedBox(height: 12),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            pw.Text(
+              title,
+              style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold, color: _textBlack),
+            ),
+            pw.Column(
+               crossAxisAlignment: pw.CrossAxisAlignment.end,
+               children: [
+                 if (entriesCount != null)
+                    pw.Text('No. of entries: $entriesCount', style: pw.TextStyle(fontSize: 10, color: _textBlack, fontWeight: pw.FontWeight.bold)),
+                 pw.SizedBox(height: 2),
+                 pw.Text(
+                   'Date: $rangeLabel',
+                   style: pw.TextStyle(fontSize: 10, color: _textGrey),
+                 ),
+               ]
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  static pw.Widget _buildCustomerDetails(Customer customer) {
+    return pw.Container(
+      padding: const pw.EdgeInsets.all(12),
+      decoration: pw.BoxDecoration(
+        color: _bgLightGrey,
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Text('Customer Details', style: pw.TextStyle(fontSize: 10, color: _textGrey)),
+              pw.SizedBox(height: 4),
+              pw.Text(customer.name, style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: _textBlack)),
+              if (customer.phone != null && customer.phone!.isNotEmpty)
+                pw.Text('Phone: ${customer.phone}', style: pw.TextStyle(fontSize: 11, color: _textGrey)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _buildStatementSummary(double opening, double gave, double got, double finalBalance) {
+    final String balanceLabel = finalBalance > 0
+        ? 'You will get'
+        : finalBalance < 0
+            ? 'You will give'
+            : 'Settled';
+    
+    final PdfColor balanceColor = finalBalance > 0
+        ? _greenColor
+        : finalBalance < 0
+            ? _redColor
+            : _textBlack;
+
+    return pw.Container(
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: _borderGrey),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Row(
+        children: [
+          // Left side: Breakdown
+          pw.Expanded(
+            flex: 6,
+            child: pw.Padding(
+              padding: const pw.EdgeInsets.all(12),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+                children: [
+                  _summaryValue(
+                    'Opening Balance', 
+                    _currencyFormat.format(opening.abs()), 
+                    opening > 0 ? _greenColor : opening < 0 ? _redColor : _textBlack,
+                    subValue: opening > 0 ? 'You will get' : opening < 0 ? 'You will give' : 'Settled',
+                  ),
+                  _summaryValue('Total Given', _currencyFormat.format(gave), _textBlack),
+                  _summaryValue('Total Received', _currencyFormat.format(got), _textBlack),
+                ],
+              ),
+            ),
+          ),
+          // Right side: Final Balance Highlight
+          pw.Expanded(
+            flex: 4,
+            child: pw.Container(
+              padding: const pw.EdgeInsets.all(16),
+              decoration: pw.BoxDecoration(
+                color: finalBalance > 0 ? PdfColor.fromInt(0xFFE8F5E9) : finalBalance < 0 ? PdfColor.fromInt(0xFFFFEBEE) : _bgLightGrey,
+                borderRadius: const pw.BorderRadius.horizontal(right: pw.Radius.circular(7)),
+                border: pw.Border(left: pw.BorderSide(color: _borderGrey)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                children: [
+                  pw.Text(
+                    'Net Balance',
+                    style: pw.TextStyle(fontSize: 10, color: _textGrey),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    balanceLabel == 'Settled' ? 'Settled' : '$balanceLabel ${_currencyFormat.format(finalBalance.abs())}',
+                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: balanceColor),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ],
+              ),
             ),
           ),
         ],
@@ -583,154 +439,292 @@ class PdfService {
     );
   }
 
-  /// Summary card for the PDF report header.
-  static pw.Widget _summaryCard(String label, String amount, PdfColor color) {
-    return pw.Expanded(
-      child: pw.Container(
-        padding: const pw.EdgeInsets.all(10),
-        decoration: pw.BoxDecoration(
-          border: pw.Border.all(color: PdfColors.grey300),
-          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-        ),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              label,
-              style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
-            ),
-            pw.SizedBox(height: 4),
-            pw.Text(
-              amount,
-              style: pw.TextStyle(
-                fontSize: 11,
-                fontWeight: pw.FontWeight.bold,
-                color: color,
+  static pw.Widget _buildGlobalSummary(double totalGet, double totalGive, double netBalance) {
+    final String balanceLabel = netBalance > 0
+        ? 'You will get in total'
+        : netBalance < 0
+            ? 'You will give in total'
+            : 'Settled';
+    
+    final PdfColor balanceColor = netBalance > 0 ? _greenColor : netBalance < 0 ? _redColor : _textBlack;
+
+    return pw.Container(
+      decoration: pw.BoxDecoration(
+        border: pw.Border.all(color: _borderGrey),
+        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+      ),
+      child: pw.Row(
+        children: [
+          pw.Expanded(
+            child: pw.Padding(
+              padding: const pw.EdgeInsets.all(16),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
+                children: [
+                  _summaryValue('Total You Will Get', _currencyFormat.format(totalGet), _greenColor),
+                  _summaryValue('Total You Will Give', _currencyFormat.format(totalGive), _redColor),
+                ],
               ),
             ),
+          ),
+          pw.Expanded(
+            child: pw.Container(
+              padding: const pw.EdgeInsets.all(16),
+              decoration: pw.BoxDecoration(
+                color: _bgLightGrey,
+                border: pw.Border(left: pw.BorderSide(color: _borderGrey)),
+              ),
+              child: pw.Column(
+                children: [
+                  pw.Text('Net Market Balance', style: pw.TextStyle(fontSize: 10, color: _textGrey)),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    balanceLabel == 'Settled' ? 'Settled' : '$balanceLabel ${_currencyFormat.format(netBalance.abs())}',
+                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: balanceColor),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static pw.Widget _summaryValue(String label, String value, PdfColor valueColor, {String? subValue}) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(label, style: pw.TextStyle(fontSize: 9, color: _textGrey)),
+        pw.SizedBox(height: 4),
+        pw.Text(value, style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: valueColor)),
+        if (subValue != null)
+           pw.Text(subValue, style: pw.TextStyle(fontSize: 8, color: valueColor)),
+      ],
+    );
+  }
+
+  static pw.Widget _buildTransactionsTable(List<TransactionModel> txns, double openingBalance) {
+    if (txns.isEmpty && openingBalance == 0) {
+       return pw.Padding(
+         padding: const pw.EdgeInsets.symmetric(vertical: 32),
+         child: pw.Center(
+           child: pw.Text('No transactions in this period', style: pw.TextStyle(color: _textGrey, fontSize: 12))
+         )
+       );
+    }
+
+    double runningBalance = openingBalance;
+
+    return pw.Table(
+      columnWidths: {
+        0: const pw.FlexColumnWidth(2.0), // Date
+        1: const pw.FlexColumnWidth(3.0), // Details
+        2: const pw.FlexColumnWidth(2.0), // You Gave
+        3: const pw.FlexColumnWidth(2.0), // You Got
+        4: const pw.FlexColumnWidth(2.5), // Balance
+      },
+      children: [
+        // Table Header
+        pw.TableRow(
+          decoration: pw.BoxDecoration(
+            color: _bgHeaderGrey,
+            border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 1.5)),
+          ),
+          children: [
+            _th('Date', align: pw.TextAlign.left),
+            _th('Details', align: pw.TextAlign.left),
+            _th('You Gave', align: pw.TextAlign.right),
+            _th('You Got', align: pw.TextAlign.right),
+            _th('Balance', align: pw.TextAlign.right),
+          ],
+        ),
+        // Opening Balance Row (if exactly 0, can omit but good for clarity)
+        if (openingBalance != 0)
+          pw.TableRow(
+            decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 0.5))),
+            children: [
+              _td('Opening Balance', color: _textGrey),
+              _td('-', color: _textGrey),
+              _td('', align: pw.TextAlign.right),
+              _td('', align: pw.TextAlign.right),
+              _tdBalance(runningBalance),
+            ],
+          ),
+        // Transactions
+        ...txns.map((t) {
+          if (t.isGot) {
+             runningBalance -= t.amount; // You got money, balance (owe you) goes down
+          } else {
+             runningBalance += t.amount; // You gave money, balance (owe you) goes up
+          }
+
+          final gaveText = !t.isGot ? _currencyFormat.format(t.amount) : '';
+          final gotText = t.isGot ? _currencyFormat.format(t.amount) : '';
+
+          return pw.TableRow(
+            decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 0.5))),
+            children: [
+              _td(_dateFormat.format(t.date)),
+              _td(t.note.isEmpty ? '-' : t.note),
+              _td(gaveText, align: pw.TextAlign.right, color: _redColor),
+              _td(gotText, align: pw.TextAlign.right, color: _greenColor),
+              _tdBalance(runningBalance),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  static pw.Widget _buildCustomerListTable(List<_CustomerReportRow> rows, double totalGet, double totalGive) {
+    return pw.Table(
+      columnWidths: {
+        0: const pw.FlexColumnWidth(3.5), // Customer Name
+        1: const pw.FlexColumnWidth(2.5), // Phone
+        2: const pw.FlexColumnWidth(2.0), // You Will Get
+        3: const pw.FlexColumnWidth(2.0), // You Will Give
+      },
+      children: [
+        pw.TableRow(
+          decoration: pw.BoxDecoration(
+            color: _bgHeaderGrey,
+            border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 1.5)),
+          ),
+          children: [
+            _th('Customer Name', align: pw.TextAlign.left),
+            _th('Phone', align: pw.TextAlign.left),
+            _th('You Will Get', align: pw.TextAlign.right),
+            _th('You Will Give', align: pw.TextAlign.right),
+          ],
+        ),
+        ...rows.map((r) {
+          return pw.TableRow(
+            decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 0.5))),
+            children: [
+              _td(r.name, isBold: true),
+              _td(r.phone, color: _textGrey),
+              _td(r.willGet > 0 ? _currencyFormat.format(r.willGet) : '-', align: pw.TextAlign.right, color: _greenColor),
+              _td(r.willGive > 0 ? _currencyFormat.format(r.willGive) : '-', align: pw.TextAlign.right, color: _redColor),
+            ],
+          );
+        }),
+        // Grand Totals Foot
+        pw.TableRow(
+          decoration: pw.BoxDecoration(
+            color: _bgHeaderGrey,
+            border: pw.Border(top: pw.BorderSide(color: _borderGrey, width: 1.5)),
+          ),
+          children: [
+             _th('Grand Total', align: pw.TextAlign.left),
+             _th('', align: pw.TextAlign.left),
+             _th(_currencyFormat.format(totalGet), align: pw.TextAlign.right, color: _greenColor),
+             _th(_currencyFormat.format(totalGive), align: pw.TextAlign.right, color: _redColor),
+          ],
+        )
+      ],
+    );
+  }
+
+  // ---- Table Cell Helpers ----
+  static pw.Widget _th(String text, {pw.TextAlign align = pw.TextAlign.left, PdfColor color = _textBlack}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: color)),
+    );
+  }
+
+  static pw.Widget _td(String text, {pw.TextAlign align = pw.TextAlign.left, PdfColor color = _textBlack, bool isBold = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: pw.Text(text, textAlign: align, style: pw.TextStyle(fontSize: 10, color: color, fontWeight: isBold ? pw.FontWeight.bold : pw.FontWeight.normal)),
+    );
+  }
+
+  static pw.Widget _tdBalance(double balance) {
+    if (balance == 0) return _td('Settled', align: pw.TextAlign.right, color: _textGrey);
+    
+    final label = balance > 0 ? 'Get ' : 'Give ';
+    final color = balance > 0 ? _greenColor : _redColor;
+    
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+      child: pw.RichText(
+        textAlign: pw.TextAlign.right,
+        text: pw.TextSpan(
+          children: [
+            pw.TextSpan(text: label, style: pw.TextStyle(fontSize: 8, color: color)),
+            pw.TextSpan(text: _currencyFormat.format(balance.abs()), style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: color)),
           ],
         ),
       ),
     );
   }
 
-  /// Builds the data table with colored column backgrounds and grand total row.
-  static pw.Widget _buildCustomerTable(
-    List<_CustomerReportRow> rows,
-    double grandTotalGet,
-    double grandTotalGive,
-  ) {
-    const headerStyle = pw.TextStyle(fontSize: 9, color: PdfColors.black);
-    final headerBoldStyle = pw.TextStyle(
-      fontSize: 9,
-      fontWeight: pw.FontWeight.bold,
-      color: PdfColors.black,
-    );
-
-    return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
-      columnWidths: {
-        0: const pw.FlexColumnWidth(2.5), // Name
-        1: const pw.FlexColumnWidth(2),   // Details
-        2: const pw.FlexColumnWidth(1.8), // You'll Get
-        3: const pw.FlexColumnWidth(1.8), // You'll Give
-        4: const pw.FlexColumnWidth(1.8), // Collection Date
-      },
+  static pw.Widget _buildSignatureSection(String customerName) {
+    return pw.Row(
+      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
-        // Header row
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: _headerGrey),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
           children: [
-            _tableCell('Name', headerBoldStyle),
-            _tableCell('Details', headerBoldStyle),
-            _tableCell("You'll Get", headerBoldStyle),
-            _tableCell("You'll Give", headerBoldStyle),
-            _tableCell('Collection Date', headerBoldStyle),
-          ],
+             pw.SizedBox(height: 40),
+             pw.Container(width: 120, height: 1, color: _textBlack),
+             pw.SizedBox(height: 4),
+             pw.Text('Authorized Signature', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+             pw.Text('Business Owner', style: pw.TextStyle(fontSize: 9, color: _textGrey)),
+          ]
         ),
-        // Data rows
-        ...rows.map((r) {
-          return pw.TableRow(
-            children: [
-              _tableCell(r.name, headerStyle),
-              _tableCell(r.phone, headerStyle),
-              _tableCellColored(
-                r.youllGet > 0 ? _currencyFormat.format(r.youllGet) : '',
-                headerStyle,
-                _lightGreenBg,
-              ),
-              _tableCellColored(
-                r.youllGive > 0 ? _currencyFormat.format(r.youllGive) : '',
-                headerStyle,
-                _lightRedBg,
-              ),
-              _tableCell(
-                r.collectionDate != null
-                    ? _dateRangeFormat.format(r.collectionDate!)
-                    : '',
-                headerStyle,
-              ),
-            ],
-          );
-        }),
-        // Grand Total row
-        pw.TableRow(
-          decoration: const pw.BoxDecoration(color: _headerGrey),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
           children: [
-            _tableCell('Grand Total', pw.TextStyle(
-              fontSize: 9,
-              fontWeight: pw.FontWeight.bold,
-            )),
-            _tableCell('', headerStyle),
-            _tableCellColored(
-              _currencyFormat.format(grandTotalGet),
-              pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _greenText),
-              _lightGreenBg,
-            ),
-            _tableCellColored(
-              _currencyFormat.format(grandTotalGive),
-              pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _redText),
-              _lightRedBg,
-            ),
-            _tableCell('', headerStyle),
+             pw.SizedBox(height: 40),
+             pw.Container(width: 120, height: 1, color: _textBlack),
+             pw.SizedBox(height: 4),
+             pw.Text('Customer Signature', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+             pw.Text(customerName, style: pw.TextStyle(fontSize: 9, color: _textGrey)),
+          ]
+        )
+      ]
+    );
+  }
+
+  static pw.Widget _buildFooter(pw.Context context) {
+    return pw.Column(
+      mainAxisSize: pw.MainAxisSize.min,
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text('This is a computer-generated report.', style: pw.TextStyle(fontSize: 8, color: _textGrey)),
+        pw.SizedBox(height: 4),
+        pw.Divider(color: _borderGrey, thickness: 1),
+        pw.SizedBox(height: 6),
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Powered by SPBOOKS', style: pw.TextStyle(fontSize: 8, color: _textGrey, fontWeight: pw.FontWeight.bold)),
+            pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: pw.TextStyle(fontSize: 8, color: _textGrey)),
           ],
         ),
       ],
     );
   }
 
-  /// Plain table cell.
-  static pw.Widget _tableCell(String text, pw.TextStyle style) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      child: pw.Text(text, style: style),
-    );
-  }
-
-  /// Table cell with a colored background.
-  static pw.Widget _tableCellColored(
-      String text, pw.TextStyle style, PdfColor bgColor) {
-    return pw.Container(
-      padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      color: bgColor,
-      child: pw.Text(text, style: style),
-    );
-  }
+  // ---- Utils ----
+  static DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
+  static String _shortDay(DateTime d) => DateFormat('ddMMyyyy').format(d);
 }
 
-/// Internal data class for report rows.
 class _CustomerReportRow {
   final String name;
   final String phone;
-  final double youllGet;
-  final double youllGive;
-  final DateTime? collectionDate;
+  final double willGet;
+  final double willGive;
 
   const _CustomerReportRow({
     required this.name,
     required this.phone,
-    required this.youllGet,
-    required this.youllGive,
-    this.collectionDate,
+    required this.willGet,
+    required this.willGive,
   });
 }

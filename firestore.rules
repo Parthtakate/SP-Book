@@ -20,11 +20,11 @@ service cloud.firestore {
         && request.resource.data.createdAt is number
         // phone is optional (nullable)
         && (
-          request.resource.data.phone == null
+          request.resource.data.get('phone', null) == null
           || (request.resource.data.phone is string && request.resource.data.phone.size() <= 20)
         )
         // updatedAt is written by the client as serverTimestamp()
-        && (request.resource.data.updatedAt == null || request.resource.data.updatedAt is timestamp);
+        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp);
 
       allow delete: if isOwner(userId);
     }
@@ -47,9 +47,9 @@ service cloud.firestore {
         && request.resource.data.note.size() <= 200
         && request.resource.data.date is number
         // imagePath is optional and must be a string if present
-        && (request.resource.data.imagePath == null || request.resource.data.imagePath is string)
+        && (request.resource.data.get('imagePath', null) == null || request.resource.data.imagePath is string)
         // updatedAt is written as serverTimestamp() (optional in older docs)
-        && (request.resource.data.updatedAt == null || request.resource.data.updatedAt is timestamp);
+        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp);
 
       allow delete: if isOwner(userId);
     }
@@ -61,8 +61,12 @@ service cloud.firestore {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
         && (
-          request.resource.data.lastBackupAt == null
+          request.resource.data.get('lastBackupAt', null) == null
           || request.resource.data.lastBackupAt is timestamp
+        )
+        && (
+          request.resource.data.get('device', null) == null
+          || request.resource.data.device is string
         )
         && request.resource.data.totalCustomers is number
         && request.resource.data.totalTransactions is number;

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -28,7 +29,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   void initState() {
     super.initState();
     _animCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 600));
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
     _loadBackupInfo();
@@ -51,8 +54,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     try {
       final db = ref.read(dbServiceProvider);
       await ref.read(firestoreBackupServiceProvider).backupAll(db);
-      final info =
-          await ref.read(firestoreBackupServiceProvider).getBackupInfo();
+      final info = await ref
+          .read(firestoreBackupServiceProvider)
+          .getBackupInfo();
       ref.read(backupInfoProvider.notifier).setInfo(info);
       ref
           .read(backupStatusProvider.notifier)
@@ -89,15 +93,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Restore from Cloud?',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Restore from Cloud?',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         content: const Text(
           'This will CLEAR all local data and replace it with your cloud backup. Cannot be undone.',
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('CANCEL')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('CANCEL'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -126,10 +133,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
           .read(backupStatusProvider.notifier)
           .updateStatus(BackupStatus.success);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('✅ Restore complete!'),
-          backgroundColor: Colors.green,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Restore complete!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     } on NoInternetException {
       ref
@@ -186,8 +195,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 
   Future<void> _loadBackupInfo() async {
     try {
-      final info =
-          await ref.read(firestoreBackupServiceProvider).getBackupInfo();
+      final info = await ref
+          .read(firestoreBackupServiceProvider)
+          .getBackupInfo();
       ref.read(backupInfoProvider.notifier).setInfo(info);
     } catch (_) {}
   }
@@ -201,7 +211,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
       final customers = db.getAllCustomers();
       final balances = ref.read(dashboardBalancesProvider);
       final txnsByCustomer = {
-        for (final c in customers) c.id: db.getTransactionsForCustomer(c.id)
+        for (final c in customers) c.id: db.getTransactionsForCustomer(c.id),
       };
       await PdfService.generateAndShareFullReport(
         customers: customers,
@@ -212,7 +222,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Error generating report. Please try again.')),
+          const SnackBar(
+            content: Text('Error generating report. Please try again.'),
+          ),
         );
       }
     }
@@ -317,12 +329,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                     const SizedBox(height: 24),
 
                     // ---- Cloud Backup (only when signed in)
-                    _SectionLabel('Cloud Backup'),
+                    _SectionLabel('Cloud Sync'),
                     const SizedBox(height: 10),
 
                     userAsync.when(
                       loading: () => const Center(
-                          child: CircularProgressIndicator.adaptive()),
+                        child: CircularProgressIndicator.adaptive(),
+                      ),
                       error: (error, stackTrace) =>
                           const Text('Error loading account.'),
                       data: (User? user) {
@@ -342,52 +355,70 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                               _BackupInfoCard(info: backupInfo)
                             else
                               Padding(
-                                padding:
-                                    const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.only(bottom: 10),
                                 child: Text(
                                   'No backup found for this account.',
                                   style: TextStyle(
-                                      color: Colors.grey.shade500,
-                                      fontSize: 13),
+                                    color: Colors.grey.shade500,
+                                    fontSize: 13,
+                                  ),
                                 ),
                               ),
 
                             // Status
-                            _StatusWidget(status: status),
+                            _StatusWidget(status: status, onReconnect: _signIn),
                             if (status != BackupStatus.idle)
                               const SizedBox(height: 10),
 
-                            // Backup button
-                            _GradientButton(
-                              label: isProcessing
-                                  ? 'Working...'
-                                  : 'Backup to Cloud',
-                              icon: isProcessing
-                                  ? null
-                                  : Icons.cloud_upload_rounded,
-                              isLoading: isProcessing,
-                              onTap: isProcessing
-                                  ? null
-                                  : () => _doBackup(context),
-                            ),
-                            const SizedBox(height: 10),
-
-                            // Restore button
-                            OutlinedButton.icon(
-                              icon: const Icon(Icons.cloud_download_rounded),
-                              label: const Text('Restore from Cloud'),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red,
-                                side: const BorderSide(color: Colors.red),
-                                minimumSize:
-                                    const Size.fromHeight(50),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: Colors.blue.shade50),
                               ),
-                              onPressed: isProcessing
-                                  ? null
-                                  : () => _doRestore(context),
+                              child: Column(
+                                children: [
+                                  _GradientButton(
+                                    label: isProcessing
+                                        ? 'Working...'
+                                        : 'Update to Cloud',
+                                    icon: isProcessing
+                                        ? null
+                                        : Icons.cloud_upload_rounded,
+                                    isLoading: isProcessing,
+                                    onTap: isProcessing
+                                        ? null
+                                        : () => _doBackup(context),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Uploads latest local data to your Google account.',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                    icon: const Icon(
+                                      Icons.cloud_download_rounded,
+                                    ),
+                                    label: const Text('Restore from Cloud'),
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.red,
+                                      side: const BorderSide(color: Colors.red),
+                                      minimumSize: const Size.fromHeight(50),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                    onPressed: isProcessing
+                                        ? null
+                                        : () => _doRestore(context),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         );
@@ -398,13 +429,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.lock_outline,
-                            size: 13, color: Colors.grey),
+                        const Icon(
+                          Icons.lock_outline,
+                          size: 13,
+                          color: Colors.grey,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           'Your data is end-to-end secured with Google.',
                           style: TextStyle(
-                              fontSize: 12, color: Colors.grey.shade500),
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
                         ),
                       ],
                     ),
@@ -455,18 +491,26 @@ class _ProfileHeader extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.person_outline,
-                      color: Colors.white70, size: 36),
+                  child: const Icon(
+                    Icons.person_outline,
+                    color: Colors.white70,
+                    size: 36,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                const Text('Guest User',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold)),
+                const Text(
+                  'Guest User',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 const SizedBox(height: 4),
-                const Text('Sign in to enable cloud backup',
-                    style: TextStyle(color: Colors.white60, fontSize: 13)),
+                const Text(
+                  'Sign in to enable cloud backup',
+                  style: TextStyle(color: Colors.white60, fontSize: 13),
+                ),
               ],
             );
           }
@@ -493,12 +537,15 @@ class _ProfileHeader extends StatelessWidget {
                   backgroundColor: Colors.white.withValues(alpha: 0.2),
                   child: user.photoURL == null
                       ? Text(
-                          user.displayName?.substring(0, 1).toUpperCase() ??
-                              '?',
+                          (user.displayName != null &&
+                                  user.displayName!.isNotEmpty)
+                              ? user.displayName!.substring(0, 1).toUpperCase()
+                              : '?',
                           style: const TextStyle(
-                              fontSize: 28,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold),
+                            fontSize: 28,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
                         )
                       : null,
                 ),
@@ -512,9 +559,10 @@ class _ProfileHeader extends StatelessWidget {
                     Text(
                       user.displayName ?? 'Unknown',
                       style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold),
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -522,14 +570,18 @@ class _ProfileHeader extends StatelessWidget {
                     Text(
                       user.email ?? '',
                       style: const TextStyle(
-                          color: Colors.white70, fontSize: 13),
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(20),
@@ -537,14 +589,20 @@ class _ProfileHeader extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: const [
-                          Icon(Icons.verified_rounded,
-                              size: 13, color: Colors.white70),
+                          Icon(
+                            Icons.verified_rounded,
+                            size: 13,
+                            color: Colors.white70,
+                          ),
                           SizedBox(width: 4),
-                          Text('Google Account',
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600)),
+                          Text(
+                            'Google Account',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -603,9 +661,10 @@ class _StatCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2)),
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
       child: Column(
@@ -624,15 +683,15 @@ class _StatCard extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: color),
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
-          Text(label,
-              style: const TextStyle(color: Colors.grey, fontSize: 10)),
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 10)),
         ],
       ),
     );
@@ -668,38 +727,50 @@ class _ActionCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2)),
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
             ],
           ),
-          child: Row(children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
                   color: iconColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Icon(icon, color: iconColor, size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Text(subtitle,
-                      style: const TextStyle(
-                          color: Colors.grey, fontSize: 12)),
-                ],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
               ),
-            ),
-            const Icon(Icons.chevron_right_rounded,
-                color: Colors.grey, size: 20),
-          ]),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.grey,
+                size: 20,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -744,18 +815,24 @@ class _GradientButton extends StatelessWidget {
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2.5, color: Colors.white))
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
+                    )
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (icon != null)
                           Icon(icon, color: Colors.white, size: 18),
                         if (icon != null) const SizedBox(width: 8),
-                        Text(label,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15)),
+                        Text(
+                          label,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
                       ],
                     ),
             ),
@@ -775,7 +852,12 @@ class _BackupInfoCard extends StatelessWidget {
     final ts = info['lastBackupAt'];
     String timeStr = 'Unknown';
     if (ts != null) {
-      final dt = (ts as dynamic).toDate() as DateTime;
+      final DateTime dt;
+      if (ts is DateTime) {
+        dt = ts;
+      } else {
+        dt = (ts as Timestamp).toDate();
+      }
       timeStr = DateFormat('dd MMM yyyy, hh:mm a').format(dt);
     }
     final customers = info['totalCustomers'] ?? 0;
@@ -791,20 +873,28 @@ class _BackupInfoCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.check_circle_rounded,
-              color: Colors.green.shade600, size: 20),
+          Icon(
+            Icons.check_circle_rounded,
+            color: Colors.green.shade600,
+            size: 20,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Last backup: $timeStr',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 12)),
+                Text(
+                  'Last backup: $timeStr',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text('$customers customers · $transactions transactions',
-                    style:
-                        const TextStyle(color: Colors.grey, fontSize: 11)),
+                Text(
+                  '$customers customers · $transactions transactions',
+                  style: const TextStyle(color: Colors.grey, fontSize: 11),
+                ),
               ],
             ),
           ),
@@ -816,7 +906,8 @@ class _BackupInfoCard extends StatelessWidget {
 
 class _StatusWidget extends StatelessWidget {
   final BackupStatus status;
-  const _StatusWidget({required this.status});
+  final VoidCallback? onReconnect;
+  const _StatusWidget({required this.status, this.onReconnect});
 
   @override
   Widget build(BuildContext context) {
@@ -827,9 +918,10 @@ class _StatusWidget extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2)),
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
             SizedBox(width: 10),
             Text('Backing up to cloud...'),
           ],
@@ -857,7 +949,7 @@ class _StatusWidget extends StatelessWidget {
       case BackupStatus.failedPermission:
         icon = Icons.lock_person_rounded;
         color = Colors.red;
-        message = 'Login expired. Please sign in again.';
+        message = 'Session issue detected. Reconnect Google and retry.';
       case BackupStatus.failedUnknown:
         icon = Icons.error_outline_rounded;
         color = Colors.red;
@@ -868,15 +960,30 @@ class _StatusWidget extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(message,
-                style: TextStyle(
-                    color: color, fontWeight: FontWeight.w500)),
+          Row(
+            children: [
+              Icon(icon, color: color, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: TextStyle(color: color, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
           ),
+          if (status == BackupStatus.failedPermission &&
+              onReconnect != null) ...[
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: onReconnect,
+              icon: const Icon(Icons.login_rounded, size: 18),
+              label: const Text('Reconnect Google'),
+            ),
+          ],
         ],
       ),
     );

@@ -57,7 +57,8 @@ class CustomerAdapter extends TypeAdapter<Customer> {
   Customer read(BinaryReader reader) {
     final id = reader.readString();
     final name = reader.readString();
-    final phone = reader.read() as String?;
+    final dynamic rawPhone = reader.read();
+    final String? phone = rawPhone is String ? rawPhone : null;
     final createdAt = DateTime.fromMillisecondsSinceEpoch(reader.readInt());
     // V3: appended field — null-presence flag for backward compat
     DateTime? updatedAt;

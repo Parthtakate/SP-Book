@@ -40,10 +40,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
 
       authenticated = await auth.authenticate(
         localizedReason: 'Unlock SPBOOKS to access your data',
-        // options: const AuthenticationOptions( // Use options if package supports it, usually yes in 3.x
-        //   stickyAuth: true,
-        //   useErrorDialogs: true,
-        // ),
+        persistAcrossBackgrounding: true,
       );
     } catch (e) {
       if (kDebugMode) debugPrint('Auth error: $e');

@@ -149,7 +149,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextFormField(
-                initialValue: widget.existingTransaction != null ? (widget.existingTransaction!.amount % 1 == 0 ? widget.existingTransaction!.amount.toInt().toString() : widget.existingTransaction!.amount.toString()) : null,
+                initialValue: widget.existingTransaction != null ? ((widget.existingTransaction!.amount - widget.existingTransaction!.amount.roundToDouble()).abs() < 0.001 ? widget.existingTransaction!.amount.toInt().toString() : widget.existingTransaction!.amount.toString()) : null,
                 decoration: const InputDecoration(
                   labelText: 'Amount (₹)',
                   border: OutlineInputBorder(),

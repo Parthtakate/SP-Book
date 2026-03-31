@@ -40,10 +40,38 @@ class FirestoreBackupService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  String get _uid {
+  Future<String> _getUidWithSessionCheck() async {
+    // Auth state can briefly lag on cold starts; wait a moment before failing.
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      await Future.delayed(const Duration(milliseconds: 400));
+      user = FirebaseAuth.instance.currentUser;
+    }
+    if (user == null) throw NotSignedInException();
+
+    try {
+      await user.getIdToken();
+    } on FirebaseAuthException {
+      await _refreshAuthToken();
+      user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw NotSignedInException();
+    }
+    return user.uid;
+  }
+
+  Future<void> _refreshAuthToken() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw NotSignedInException();
-    return user.uid;
+    await user.reload();
+    final refreshedUser = FirebaseAuth.instance.currentUser;
+    if (refreshedUser == null) throw NotSignedInException();
+    await refreshedUser.getIdToken(true);
+  }
+
+  bool _isAuthOrPermissionError(FirebaseException e) {
+    return e.code == 'permission-denied' ||
+        e.code == 'unauthenticated' ||
+        e.code == 'user-token-expired';
   }
 
   /// Checks internet connectivity before any Firestore operation.
@@ -53,7 +81,8 @@ class FirestoreBackupService {
       final results = await Connectivity().checkConnectivity().timeout(
         const Duration(seconds: 2),
       );
-      if (results.isEmpty || results.every((r) => r == ConnectivityResult.none)) {
+      if (results.isEmpty ||
+          results.every((r) => r == ConnectivityResult.none)) {
         throw NoInternetException();
       }
     } catch (_) {
@@ -62,7 +91,11 @@ class FirestoreBackupService {
 
     // Stage 2: Real internet reachability check
     try {
-      final socket = await RawSocket.connect('8.8.8.8', 53, timeout: const Duration(seconds: 3));
+      final socket = await RawSocket.connect(
+        '8.8.8.8',
+        53,
+        timeout: const Duration(seconds: 3),
+      );
       socket.close();
     } catch (_) {
       throw NoInternetException();
@@ -77,7 +110,7 @@ class FirestoreBackupService {
   /// Splits into chunks of [_batchLimit] to respect the Firestore 500-op limit.
   Future<void> backupAll(DbService db) async {
     await _assertConnected();
-    final uid = _uid;
+    final uid = await _getUidWithSessionCheck();
 
     final customers = db.getAllCustomers();
     final transactions = customers
@@ -110,20 +143,23 @@ class FirestoreBackupService {
 
     // Write backup metadata document with timeout
     try {
-      await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('meta')
-          .doc('backup_info')
-          .set({
-        'lastBackupAt': FieldValue.serverTimestamp(),
-        'device': Platform.operatingSystem,
-        'totalCustomers': customers.length,
-        'totalTransactions': transactions.length,
-      }).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () => throw FirestoreTimeoutException(),
-      );
+      await _withAuthRetry(() async {
+        await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('meta')
+            .doc('backup_info')
+            .set({
+              'lastBackupAt': FieldValue.serverTimestamp(),
+              'device': Platform.operatingSystem,
+              'totalCustomers': customers.length,
+              'totalTransactions': transactions.length,
+            })
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () => throw FirestoreTimeoutException(),
+            );
+      });
     } on TimeoutException {
       throw FirestoreTimeoutException();
     }
@@ -138,29 +174,33 @@ class FirestoreBackupService {
   /// - Otherwise → last-write-wins: only overwrites local if Firestore is newer.
   Future<void> restoreAll(DbService db) async {
     await _assertConnected();
-    final uid = _uid;
+    final uid = await _getUidWithSessionCheck();
 
     try {
       // Fetch from Firestore with timeout
-      final customerDocs = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('customers')
-          .get()
-          .timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => throw FirestoreTimeoutException(),
-          );
-          
-      final transactionDocs = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('transactions')
-          .get()
-          .timeout(
-            const Duration(seconds: 15),
-            onTimeout: () => throw FirestoreTimeoutException(),
-          );
+      final customerDocs = await _withAuthRetry(() async {
+        return _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('customers')
+            .get()
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () => throw FirestoreTimeoutException(),
+            );
+      });
+
+      final transactionDocs = await _withAuthRetry(() async {
+        return _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('transactions')
+            .get()
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () => throw FirestoreTimeoutException(),
+            );
+      });
 
       final remoteCustomers = customerDocs.docs
           .map((d) => Customer.fromFirestore(d.data()))
@@ -181,7 +221,7 @@ class FirestoreBackupService {
         await db.saveTransaction(t);
       }
     } on FirebaseException catch (e) {
-      if (e.code == 'permission-denied') throw FirestorePermissionException();
+      if (_isAuthOrPermissionError(e)) throw FirestorePermissionException();
       rethrow;
     }
   }
@@ -193,18 +233,20 @@ class FirestoreBackupService {
   /// Fetches the backup metadata document (may return null if never backed up).
   Future<Map<String, dynamic>?> getBackupInfo() async {
     await _assertConnected();
-    final uid = _uid;
+    final uid = await _getUidWithSessionCheck();
     try {
-      final doc = await _firestore
-          .collection('users')
-          .doc(uid)
-          .collection('meta')
-          .doc('backup_info')
-          .get()
-          .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () => throw FirestoreTimeoutException(),
-          );
+      final doc = await _withAuthRetry(() async {
+        return _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('meta')
+            .doc('backup_info')
+            .get()
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () => throw FirestoreTimeoutException(),
+            );
+      });
       return doc.exists ? doc.data() : null;
     } on TimeoutException {
       throw FirestoreTimeoutException();
@@ -217,10 +259,7 @@ class FirestoreBackupService {
 
   Future<void> _commitInChunks(List<_WriteOp> ops) async {
     for (int i = 0; i < ops.length; i += _batchLimit) {
-      final chunk = ops.sublist(
-        i,
-        (i + _batchLimit).clamp(0, ops.length),
-      );
+      final chunk = ops.sublist(i, (i + _batchLimit).clamp(0, ops.length));
       final batch = _firestore.batch();
       for (final op in chunk) {
         batch.set(op.ref, op.data);
@@ -234,19 +273,37 @@ class FirestoreBackupService {
     const int retries = 3;
     for (int i = 0; i < retries; i++) {
       try {
-        await batch.commit().timeout(
-          const Duration(seconds: 30),
-        );
+        await _withAuthRetry(() async {
+          await batch.commit().timeout(const Duration(seconds: 60));
+        });
         return; // Success, exit the loop
       } on FirebaseException catch (e) {
-        if (e.code == 'permission-denied') throw FirestorePermissionException();
+        if (_isAuthOrPermissionError(e)) throw FirestorePermissionException();
         // If it's a structural error that won't resolve, throw immediately
-        if (e.code == 'not-found' || e.code == 'unauthenticated') rethrow;
-      } catch (e) {
-        if (i == retries - 1) {
-          throw FirestoreTimeoutException();
-        }
+        if (e.code == 'not-found') rethrow;
+      } on TimeoutException {
+        if (i == retries - 1) throw FirestoreTimeoutException();
         await Future.delayed(const Duration(seconds: 2));
+      } catch (e) {
+        if (i == retries - 1) rethrow; // Let unknown errors bubble up
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+  }
+
+  Future<T> _withAuthRetry<T>(Future<T> Function() action) async {
+    try {
+      return await action();
+    } on FirebaseException catch (e) {
+      if (!_isAuthOrPermissionError(e)) rethrow;
+      await _refreshAuthToken();
+      try {
+        return await action();
+      } on FirebaseException catch (retryError) {
+        if (_isAuthOrPermissionError(retryError)) {
+          throw FirestorePermissionException();
+        }
+        rethrow;
       }
     }
   }

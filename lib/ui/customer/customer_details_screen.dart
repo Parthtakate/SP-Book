@@ -55,6 +55,11 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                 fit: BoxFit.contain,
                 width: double.infinity,
                 height: double.infinity,
+                errorBuilder: (context, error, stackTrace) =>
+                    const Center(
+                  child: Icon(Icons.broken_image_outlined,
+                      size: 64, color: Colors.white54),
+                ),
               ),
             ),
             Positioned(
@@ -442,7 +447,7 @@ class _GradientHeader extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (balance != 0)
+                  if (balance.abs() > 0.001)
                     ElevatedButton.icon(
                       onPressed: onSettle,
                       icon: const Icon(Icons.handshake, size: 16),
@@ -772,6 +777,17 @@ class _TransactionCard extends StatelessWidget {
                           height: 36,
                           fit: BoxFit.cover,
                           cacheWidth: 108,
+                          errorBuilder: (context, error, stackTrace) =>
+                              Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Icon(Icons.broken_image_outlined,
+                                size: 18, color: Colors.grey.shade400),
+                          ),
                         ),
                       ),
                     ),

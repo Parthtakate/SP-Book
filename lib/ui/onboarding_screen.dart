@@ -74,12 +74,18 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
   }
 
   void _skipLogin() async {
-    // Persist onboarding completion so the screen doesn't show again
-    await ref.read(dbServiceProvider).setOnboardingCompleted(true);
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AppLockScreen()),
-      );
+    if (_isSigningIn) return;
+    setState(() => _isSigningIn = true);
+    try {
+      // Persist onboarding completion so the screen doesn't show again
+      await ref.read(dbServiceProvider).setOnboardingCompleted(true);
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const AppLockScreen()),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSigningIn = false);
     }
   }
 
@@ -210,8 +216,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
-                                        Image.network(
-                                          'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                                        Image.asset(
+                                          'assets/images/google_logo.png',
                                           width: 22,
                                           height: 22,
                                           errorBuilder: (context, error, stackTrace) =>
