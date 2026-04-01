@@ -7,11 +7,11 @@ import '../providers/transaction_provider.dart';
 import '../providers/customer_last_transaction_provider.dart';
 import '../providers/db_provider.dart';
 import '../models/customer.dart';
-import '../services/firestore_sync_service.dart';
 import 'customer/add_customer_screen.dart';
 import 'customer/customer_details_screen.dart';
 import 'reports/reports_screen.dart';
 import 'settings_screen.dart';
+import '../providers/auto_sync_provider.dart';
 
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _relativeDate = DateFormat('d MMM');
@@ -49,9 +49,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       if (mounted) _fabAnimController.forward();
     });
 
-    // On every app open, retry any pending cloud-sync operations first.
     Future.microtask(() async {
-      await ref.read(firestoreSyncServiceProvider).flushPending();
+      // Background sync triggers removed for architectural simplification.
     });
   }
 
@@ -99,10 +98,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Keep auto-sync alive
+    ref.watch(autoSyncProvider);
+    
     final balances = ref.watch(dashboardBalancesProvider);
     final allCustomers = ref.watch(customersProvider);
     final db = ref.watch(dbServiceProvider);
-    ref.watch(anyTransactionChangeProvider);
 
     final List<Customer> filteredCustomers = allCustomers.where((c) {
       if (_searchQuery.isNotEmpty) {
@@ -117,9 +118,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         double balance = 0;
         for (final t in txns) {
           if (t.isGot) {
-            balance -= t.amount;
+            balance -= (t.amountInPaise / 100.0);
           } else {
-            balance += t.amount;
+            balance += (t.amountInPaise / 100.0);
           }
         }
         if (_filterMode == FilterMode.toReceive && balance <= 0) {

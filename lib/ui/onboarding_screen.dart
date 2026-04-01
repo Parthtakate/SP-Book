@@ -52,6 +52,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
       // Persist onboarding completion so the screen doesn't show again
+      await ref.read(dbServiceProvider).setLoggedIn(true);
       await ref.read(dbServiceProvider).setOnboardingCompleted(true);
       if (mounted) {
         Navigator.of(context).pushReplacement(

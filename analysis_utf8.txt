@@ -1,0 +1,7 @@
+﻿Analyzing khata_app...                                          
+
+  error - Undefined name 'anyTransactionChangeProvider' - lib\providers\customer_last_transaction_provider.dart:13:13 - undefined_identifier
+  error - Undefined name 'anyTransactionChangeProvider' - lib\providers\reports_provider.dart:102:13 - undefined_identifier
+  error - Undefined name 'anyCustomerChangeProvider' - lib\services\downlink_sync_service.dart:45:16 - undefined_identifier
+  error - Undefined name 'anyTransactionChangeProvider' - lib\services\downlink_sync_service.dart:46:16 - undefined_identifier
+

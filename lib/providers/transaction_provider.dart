@@ -2,20 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/transaction.dart';
 import 'db_provider.dart';
-import '../services/firestore_sync_service.dart';
-
-final anyTransactionChangeProvider = NotifierProvider<AnyTransactionChangeNotifier, int>(() {
-  return AnyTransactionChangeNotifier();
-});
-
-class AnyTransactionChangeNotifier extends Notifier<int> {
-  @override
-  int build() => 0;
-
-  void notifyChanged() {
-    state++;
-  }
-}
+import 'reports_provider.dart';
+import 'customer_last_transaction_provider.dart';
 
 // Transaction Service
 class TransactionService {
@@ -25,7 +13,7 @@ class TransactionService {
 
   Future<void> addTransaction({
     required String customerId,
-    required double amount,
+    required int amountInPaise,
     required bool isGot,
     String? note,
     String? imagePath,
@@ -33,7 +21,7 @@ class TransactionService {
     final transaction = TransactionModel(
       id: const Uuid().v4(),
       customerId: customerId,
-      amount: amount,
+      amountInPaise: amountInPaise,
       isGot: isGot,
       note: note ?? '',
       date: DateTime.now(),
@@ -41,32 +29,27 @@ class TransactionService {
     );
     await ref.read(dbServiceProvider).saveTransaction(transaction);
 
-    // Incremental cloud sync: keeps transactions up to date.
-    await ref
-        .read(firestoreSyncServiceProvider)
-        .syncTransactionUpsert(transaction);
-
-    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+    _refresh(customerId);
   }
 
-  Future<void> deleteTransaction(String transactionId) async {
+  Future<void> deleteTransaction(String transactionId, String customerId) async {
     await ref.read(dbServiceProvider).deleteTransaction(transactionId);
 
-    await ref
-        .read(firestoreSyncServiceProvider)
-        .syncTransactionDelete(transactionId);
-
-    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+    _refresh(customerId);
   }
 
   Future<void> updateTransaction(TransactionModel updatedTransaction) async {
     await ref.read(dbServiceProvider).saveTransaction(updatedTransaction);
 
-    await ref
-        .read(firestoreSyncServiceProvider)
-        .syncTransactionUpsert(updatedTransaction);
+    _refresh(updatedTransaction.customerId);
+  }
 
-    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
+  void _refresh(String customerId) {
+    ref.invalidate(customerTransactionsProvider(customerId));
+    ref.invalidate(customerBalanceProvider(customerId));
+    ref.invalidate(customerLastTransactionProvider(customerId));
+    ref.invalidate(dashboardBalancesProvider);
+    ref.invalidate(accountStatementProvider);
   }
 }
 
@@ -75,7 +58,6 @@ final transactionServiceProvider = Provider<TransactionService>((ref) {
 });
 
 final customerTransactionsProvider = Provider.family<List<TransactionModel>, String>((ref, customerId) {
-  ref.watch(anyTransactionChangeProvider);
   final db = ref.watch(dbServiceProvider);
   return db.getTransactionsForCustomer(customerId);
 });
@@ -85,29 +67,23 @@ final customerBalanceProvider = Provider.family<double, String>((ref, customerId
   double balance = 0;
   for (var t in transactions) {
     if (t.isGot) {
-      balance -= t.amount;
+      balance -= (t.amountInPaise / 100.0);
     } else {
-      balance += t.amount;
+      balance += (t.amountInPaise / 100.0);
     }
   }
   return balance;
 });
 
 final dashboardBalancesProvider = Provider<Map<String, double>>((ref) {
-  ref.watch(anyTransactionChangeProvider);
   final db = ref.watch(dbServiceProvider);
   
   double totalToReceive = 0;
   double totalToPay = 0;
 
-  // Avoid N x "getTransactionsForCustomer" scans (slow on large datasets).
-  // Instead, compute each customer's balance in one pass over all transactions.
   final Map<String, double> balanceByCustomer = {};
   for (final t in db.transactionsBox.values) {
-    // Model convention used across the app:
-    // - t.isGot == true  -> decreases balance (debit(-))
-    // - t.isGot == false -> increases balance (credit(+))
-    final delta = t.isGot ? -t.amount : t.amount;
+    final delta = t.isGot ? -(t.amountInPaise / 100.0) : (t.amountInPaise / 100.0);
     balanceByCustomer[t.customerId] =
         (balanceByCustomer[t.customerId] ?? 0) + delta;
   }

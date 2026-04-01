@@ -256,7 +256,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
               if (confirm == true) {
                 ref.read(transactionServiceProvider).addTransaction(
                   customerId: widget.customer.id,
-                  amount: balance.abs(),
+                  amountInPaise: (balance.abs() * 100).round(),
                   isGot: balance > 0,
                   note: 'Balance Settled',
                 );
@@ -291,7 +291,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                           onDelete: () {
                             ref
                                 .read(transactionServiceProvider)
-                                .deleteTransaction(t.id);
+                                .deleteTransaction(t.id, widget.customer.id);
                           },
                           onEdit: () {
                             Navigator.push(
@@ -758,7 +758,7 @@ class _TransactionCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    _currency.format(t.amount),
+                    _currency.format(t.amountInPaise / 100.0),
                     style: TextStyle(
                       color: tagColor,
                       fontWeight: FontWeight.bold,

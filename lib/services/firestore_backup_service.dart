@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../services/db_service.dart';
+import '../services/auth_service.dart';
 import '../models/customer.dart';
 import '../models/transaction.dart';
 
@@ -47,6 +48,15 @@ class FirestoreBackupService {
       await Future.delayed(const Duration(milliseconds: 400));
       user = FirebaseAuth.instance.currentUser;
     }
+    
+    // If still null, try to forcefully restore Google session (handles offline-to-online transitions)
+    if (user == null) {
+      try {
+        await AuthService().tryRestoreSessionSilently();
+        user = FirebaseAuth.instance.currentUser;
+      } catch (_) {}
+    }
+
     if (user == null) throw NotSignedInException();
 
     try {
@@ -113,9 +123,18 @@ class FirestoreBackupService {
     final uid = await _getUidWithSessionCheck();
 
     final customers = db.getAllCustomers();
-    final transactions = customers
-        .expand((c) => db.getTransactionsForCustomer(c.id))
-        .toList();
+    final transactions = db.transactionsBox.values.toList();
+
+    // SAFETY GUARD: Never upload an empty dataset to the cloud.
+    // This prevents accidentally overwriting a valid cloud backup with nothing,
+    // which can happen if the local DB was just cleared or sign-out was called.
+    if (customers.isEmpty && transactions.isEmpty) {
+      if (const bool.fromEnvironment('dart.vm.product') == false) {
+        // ignore: avoid_print
+        print('[FirestoreBackup] Skipping backup — local data is empty. Cloud data preserved.');
+      }
+      return;
+    }
 
     // Build a flat list of Firestore write operations
     final List<_WriteOp> ops = [];
@@ -176,6 +195,7 @@ class FirestoreBackupService {
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
 
+    db.isRestoring = true; // Signal watchers to ignore these ops
     try {
       // Fetch from Firestore with timeout
       final customerDocs = await _withAuthRetry(() async {
@@ -209,10 +229,18 @@ class FirestoreBackupService {
           .map((d) => TransactionModel.fromFirestore(d.data()))
           .toList();
 
-      // ---- Clear local Hive before restoring to prevent stale/duplicate data
+      // SAFETY GUARD: Only clear local data if the remote backup actually has
+      // content. If Firestore returns empty (e.g., first-time user or network
+      // returned partial data), we preserve local data unconditionally.
+      if (remoteCustomers.isEmpty && remoteTransactions.isEmpty) {
+        // Nothing to restore — keep local data intact.
+        return;
+      }
+
+      // ---- Clear local Hive AFTER confirming remote data is non-empty
       await db.clearAll();
 
-      // ---- Write all remote data to Hive (no conflict check needed after clear)
+      // ---- Write all remote data to Hive
       for (final c in remoteCustomers) {
         await db.saveCustomer(c);
       }
@@ -220,9 +248,15 @@ class FirestoreBackupService {
       for (final t in remoteTransactions) {
         await db.saveTransaction(t);
       }
+
+      // Update local modification time to match the backup completion roughly
+      await db.setLastLocalModifiedAt(DateTime.now().millisecondsSinceEpoch);
+
     } on FirebaseException catch (e) {
       if (_isAuthOrPermissionError(e)) throw FirestorePermissionException();
       rethrow;
+    } finally {
+      db.isRestoring = false;
     }
   }
 

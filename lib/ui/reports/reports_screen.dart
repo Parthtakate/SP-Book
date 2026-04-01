@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -5,11 +6,12 @@ import 'package:share_plus/share_plus.dart';
 import '../../providers/db_provider.dart';
 import '../../services/pdf_service.dart';
 import '../../providers/reports_provider.dart';
-import '../../models/customer.dart';
-import '../../models/transaction.dart';
 
-final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-final _dateFormat = DateFormat('dd MMM yy');
+final _inrFormat = NumberFormat('#,##,##0.00', 'en_IN');
+final _dateFormat = DateFormat('dd MMM');
+final _fullDateFormat = DateFormat('dd MMM yyyy');
+final _headerDateFormat = DateFormat('dd MMM yyyy');
+final _timestampFormat = DateFormat("h:mm a | dd MMM''yy");
 
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
@@ -21,7 +23,7 @@ class ReportsScreen extends ConsumerStatefulWidget {
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   DateTime? _startDate;
   DateTime? _endDate;
-  String _filterMode = 'ALL'; // 'ALL' or 'DATE RANGE'
+  String _filterMode = 'ALL';
   final TextEditingController _searchCtrl = TextEditingController();
 
   @override
@@ -39,7 +41,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
-            primary: Color(0xFF1565C0),
+            primary: Color(0xFF1A237E),
             onPrimary: Colors.white,
             onSurface: Colors.black,
           ),
@@ -61,7 +63,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       builder: (context, child) => Theme(
         data: Theme.of(context).copyWith(
           colorScheme: const ColorScheme.light(
-            primary: Color(0xFF1565C0),
+            primary: Color(0xFF1A237E),
             onPrimary: Colors.white,
             onSurface: Colors.black,
           ),
@@ -92,59 +94,50 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
   }
 
-  Future<String?> _generatePdfFile() async {
-    final dateRange = ref.read(reportDateRangeProvider);
-    final report = ref.read(reportsProvider);
+  String _getUserName() {
+    // Priority: Business name > Firebase display name > fallback
     final db = ref.read(dbServiceProvider);
+    final businessName = db.getBusinessName();
+    if (businessName != null && businessName.isNotEmpty) return businessName;
 
-    // Keep PDF consistent with what user sees:
-    // - respect the same date range filters
-    // - respect the same search filter (reportsProvider already filters it)
-    final customerIds = report.perCustomer.map((e) => e.customerId).toSet();
-    final customers = report.perCustomer
-        .map((e) => db.customersBox.get(e.customerId))
-        .whereType<Customer>()
-        .toList();
-
-    // Build map in one pass over transactions instead of N x scans.
-    final txnsByCustomer = <String, List<TransactionModel>>{};
-    for (final t in db.transactionsBox.values) {
-      if (!customerIds.contains(t.customerId)) continue;
-      txnsByCustomer.putIfAbsent(t.customerId, () => []).add(t);
-    }
-
-    return await PdfService.generateCustomerListReportPdf(
-      customers: customers,
-      transactionsByCustomer: txnsByCustomer,
-      totalToReceive: report.totalCredit,
-      totalToPay: report.totalDebit,
-      dateRange: dateRange,
-    );
+    final user = FirebaseAuth.instance.currentUser;
+    return user?.displayName ?? 'Account Statement';
   }
 
-  Future<void> _downloadPdf() async {
+  String _getDateRangeLabel() {
+    final dateRange = ref.read(reportDateRangeProvider);
+    if (dateRange == null) return 'All';
+    return '${_headerDateFormat.format(dateRange.start)} - ${_headerDateFormat.format(dateRange.end)}';
+  }
+
+  Future<void> _exportPdf() async {
     try {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Generating PDF...'),
         behavior: SnackBarBehavior.floating,
       ));
 
-      final filePath = await _generatePdfFile();
-      if (filePath == null) return;
+      final statement = ref.read(accountStatementProvider);
+      final dateRange = ref.read(reportDateRangeProvider);
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('PDF saved successfully.'),
+      final filePath = await PdfService.generateAccountStatementPdf(
+        userName: _getUserName(),
+        statement: statement,
+        dateRange: dateRange,
+      );
+
+      if (filePath == null || !mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('PDF saved successfully.'),
         behavior: SnackBarBehavior.floating,
       ));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Error generating PDF. Please try again.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Error generating PDF. Please try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
     }
   }
 
@@ -155,266 +148,458 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         behavior: SnackBarBehavior.floating,
       ));
 
-      final filePath = await _generatePdfFile();
+      final statement = ref.read(accountStatementProvider);
+      final dateRange = ref.read(reportDateRangeProvider);
+
+      final filePath = await PdfService.generateAccountStatementPdf(
+        userName: _getUserName(),
+        statement: statement,
+        dateRange: dateRange,
+      );
+
       if (filePath == null) return;
 
       // ignore: deprecated_member_use
       await Share.shareXFiles(
         [XFile(filePath)],
-        text: 'SPBOOKS Customer List Report',
+        text: 'SPBOOKS Account Statement',
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Error sharing PDF. Please try again.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Error sharing PDF. Please try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final report = ref.watch(reportsProvider);
+    final statement = ref.watch(accountStatementProvider);
+    final userName = _getUserName();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      // ---- AppBar ----
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF1565C0),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'View Report',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-        ),
-      ),
+      backgroundColor: Colors.white,
       body: Column(
         children: [
-          // ---- Blue header area ----
+          // ── Dark Blue Header Bar ──
           Container(
-            color: const Color(0xFF1565C0),
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              children: [
-                // Date pickers row
-                Row(
-                  children: [
-                    Expanded(
-                      child: _DatePickerBox(
-                        label: 'START DATE',
-                        date: _startDate,
-                        onTap: _pickStartDate,
+            color: const Color(0xFF1A237E),
+            padding: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: const Icon(Icons.arrow_back, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      userName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _DatePickerBox(
-                        label: 'END DATE',
-                        date: _endDate,
-                        onTap: _pickEndDate,
-                      ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Search + dropdown row
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF50),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: const Icon(Icons.book, color: Colors.white, size: 10),
                         ),
-                        child: TextField(
-                          controller: _searchCtrl,
-                          onChanged: (v) =>
-                              ref.read(reportSearchTextProvider.notifier).update(v),
-                          style: const TextStyle(fontSize: 14),
-                          decoration: const InputDecoration(
-                            hintText: 'Search Entries',
-                            hintStyle: TextStyle(color: Colors.grey, fontSize: 13),
-                            prefixIcon: Icon(Icons.search, size: 20, color: Colors.grey),
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(vertical: 10),
+                        const SizedBox(width: 4),
+                        const Text(
+                          'SPBOOKS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Scrollable Content ──
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 24),
+
+                  // ── Title: "Account Statement" ──
+                  const Text(
+                    'Account Statement',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '(${_getDateRangeLabel()})',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // ── Summary Cards ──
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: IntrinsicHeight(
+                        child: Row(
+                          children: [
+                            // Total Debit(-)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Total Debit(-)',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '₹${_inrFormat.format(statement.grandTotalDebit)}',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            VerticalDivider(width: 1, color: Colors.grey.shade300),
+                            // Total Credit(+)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Total Credit(+)',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '₹${_inrFormat.format(statement.grandTotalCredit)}',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            VerticalDivider(width: 1, color: Colors.grey.shade300),
+                            // Net Balance
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      'Net Balance',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '₹${_inrFormat.format(statement.netBalance.abs())} ${statement.balanceType}',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: statement.balanceType == 'Cr'
+                                            ? const Color(0xFF2E7D32)
+                                            : const Color(0xFFC62828),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    Container(
-                      height: 42,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: DropdownButton<String>(
-                        value: _filterMode,
-                        underline: const SizedBox(),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1565C0),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ── Filter Controls ──
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        // Entry count
+                        Text(
+                          'No. of Entries:  ${statement.entryCount} (${_filterMode == 'ALL' ? 'All' : 'Filtered'})',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
                         ),
-                        items: const [
-                          DropdownMenuItem(value: 'ALL', child: Text('ALL')),
-                          DropdownMenuItem(
-                              value: 'DATE RANGE', child: Text('DATE RANGE')),
+                        const Spacer(),
+                        // Filter dropdown
+                        Container(
+                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: DropdownButton<String>(
+                            value: _filterMode,
+                            underline: const SizedBox(),
+                            isDense: true,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1A237E),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'ALL', child: Text('ALL')),
+                              DropdownMenuItem(value: 'DATE RANGE', child: Text('DATE RANGE')),
+                            ],
+                            onChanged: _onFilterChanged,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ── Date pickers (visible only in DATE RANGE mode) ──
+                  if (_filterMode == 'DATE RANGE') ...[
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _DateChip(
+                              label: 'FROM',
+                              date: _startDate,
+                              onTap: _pickStartDate,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _DateChip(
+                              label: 'TO',
+                              date: _endDate,
+                              onTap: _pickEndDate,
+                            ),
+                          ),
                         ],
-                        onChanged: _onFilterChanged,
                       ),
                     ),
                   ],
-                ),
-              ],
-            ),
-          ),
 
-          // ---- Net Balance Row ----
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            color: Colors.white,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Net Balance',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
+                  // ── Search bar ──
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: Container(
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        onChanged: (v) =>
+                            ref.read(reportSearchTextProvider.notifier).update(v),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: const InputDecoration(
+                          hintText: 'Search by name or details...',
+                          hintStyle: TextStyle(color: Colors.grey, fontSize: 12),
+                          prefixIcon: Icon(Icons.search, size: 18, color: Colors.grey),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                Text(
-                  _currency.format(report.net.abs()),
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: report.net >= 0
-                        ? const Color(0xFF2E7D32)
-                        : const Color(0xFFC62828),
-                  ),
-                ),
-              ],
-            ),
-          ),
 
-          // ---- Aggregate Header Row ----
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              border: Border(
-                top: BorderSide(color: Colors.grey.shade200),
-                bottom: BorderSide(color: Colors.grey.shade200),
+                  const SizedBox(height: 12),
+
+                  // ── Table Header ──
+                  Container(
+                    color: Colors.grey.shade200,
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 60, child: Text('Date', style: _headerStyle)),
+                        const Expanded(flex: 3, child: Text('Name', style: _headerStyle)),
+                        const Expanded(flex: 3, child: Text('Details', style: _headerStyle)),
+                        Container(
+                          width: 90,
+                          alignment: Alignment.centerRight,
+                          child: const Text('Debit(-)', style: _headerStyle),
+                        ),
+                        Container(
+                          width: 90,
+                          alignment: Alignment.centerRight,
+                          child: const Text('Credit(+)', style: _headerStyle),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // ── Month Groups ──
+                  if (statement.monthGroups.isEmpty)
+                    const _EmptyState()
+                  else
+                    ...statement.monthGroups.expand((group) => [
+                          // Month header
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                            child: Text(
+                              group.label,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          // Entries
+                          ...group.entries.map((entry) => _EntryRow(entry: entry)),
+                          // Monthly total
+                          _MonthTotalRow(group: group),
+                        ]),
+
+                  // ── Grand Total ──
+                  if (statement.monthGroups.isNotEmpty)
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(color: Colors.grey.shade400, width: 1.5),
+                          bottom: BorderSide(color: Colors.grey.shade400, width: 1.5),
+                        ),
+                        color: Colors.grey.shade50,
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 60),
+                          const Expanded(
+                            flex: 3,
+                            child: Text(
+                              'Grand Total',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          const Expanded(flex: 3, child: SizedBox()),
+                          Container(
+                            width: 90,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF0F0),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              _inrFormat.format(statement.grandTotalDebit),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Color(0xFFC62828),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Container(
+                            width: 90,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF0FFF0),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              _inrFormat.format(statement.grandTotalCredit),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Color(0xFF2E7D32),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  // ── Footer timestamp ──
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Text(
+                      'Report Generated : ${_timestampFormat.format(DateTime.now())}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 80), // space for bottom buttons
+                ],
               ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'TOTAL',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${report.totalEntries} Entries',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'YOU GAVE',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _currency.format(report.totalDebit),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFFC62828),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      const Text(
-                        'YOU GOT',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _currency.format(report.totalCredit),
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2E7D32),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
           ),
 
-          // ---- Transaction List ----
-          Expanded(
-            child: report.perCustomer.isEmpty
-                ? const _EmptyReportsState()
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    itemCount: report.perCustomer.length,
-                    itemBuilder: (ctx, i) {
-                      final summary = report.perCustomer[i];
-                      return _TransactionRow(summary: summary);
-                    },
-                  ),
-          ),
-
-          // ---- Bottom Sticky Buttons ----
+          // ── Bottom Sticky Buttons ──
           Container(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             decoration: BoxDecoration(
@@ -433,14 +618,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _downloadPdf,
+                      onPressed: _exportPdf,
                       icon: const Icon(Icons.picture_as_pdf, size: 18),
                       label: const Text(
                         'PDF DOWNLOAD',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1565C0),
+                        backgroundColor: const Color(0xFF1A237E),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
@@ -480,44 +665,190 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Date Picker Box
-// ---------------------------------------------------------------------------
+// ── Styles ──
+const _headerStyle = TextStyle(
+  fontSize: 12,
+  fontWeight: FontWeight.bold,
+  color: Colors.black54,
+);
 
-class _DatePickerBox extends StatelessWidget {
+// ── Entry Row ──
+class _EntryRow extends StatelessWidget {
+  final AccountStatementEntry entry;
+  const _EntryRow({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200, width: 0.5)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              _dateFormat.format(entry.date),
+              style: const TextStyle(fontSize: 12, color: Colors.black87),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              entry.customerName,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black87),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              entry.details.isEmpty ? '' : entry.details,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Debit column — light red bg
+          Container(
+            width: 90,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            decoration: entry.debitAmount > 0
+                ? BoxDecoration(
+                    color: const Color(0xFFFFF0F0),
+                    borderRadius: BorderRadius.circular(4),
+                  )
+                : null,
+            child: Text(
+              entry.debitAmount > 0 ? _inrFormat.format(entry.debitAmount) : '',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFC62828),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Credit column — light green bg
+          Container(
+            width: 90,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            decoration: entry.creditAmount > 0
+                ? BoxDecoration(
+                    color: const Color(0xFFF0FFF0),
+                    borderRadius: BorderRadius.circular(4),
+                  )
+                : null,
+            child: Text(
+              entry.creditAmount > 0 ? _inrFormat.format(entry.creditAmount) : '',
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF2E7D32),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Monthly Total Row ──
+class _MonthTotalRow extends StatelessWidget {
+  final MonthGroup group;
+  const _MonthTotalRow({required this.group});
+
+  @override
+  Widget build(BuildContext context) {
+    // Extract just the month name (e.g. "October" from "October 2023")
+    final monthName = group.label.split(' ').first;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: Colors.grey.shade300),
+          bottom: BorderSide(color: Colors.grey.shade300),
+        ),
+        color: Colors.grey.shade50,
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+      child: Row(
+        children: [
+          const SizedBox(width: 60),
+          Expanded(
+            flex: 3,
+            child: Text(
+              '$monthName Total',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                color: Colors.black87,
+              ),
+            ),
+          ),
+          const Expanded(flex: 3, child: SizedBox()),
+          Container(
+            width: 90,
+            alignment: Alignment.centerRight,
+            child: Text(
+              _inrFormat.format(group.monthTotalDebit),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                color: Color(0xFFC62828),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Container(
+            width: 90,
+            alignment: Alignment.centerRight,
+            child: Text(
+              _inrFormat.format(group.monthTotalCredit),
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                color: Color(0xFF2E7D32),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Date Chip ──
+class _DateChip extends StatelessWidget {
   final String label;
   final DateTime? date;
   final VoidCallback onTap;
 
-  const _DatePickerBox({
-    required this.label,
-    required this.date,
-    required this.onTap,
-  });
+  const _DateChip({required this.label, required this.date, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.white54),
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.white.withValues(alpha: 0.1),
+          border: Border.all(color: Colors.grey.shade300),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today, size: 16, color: Colors.white70),
+            Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade600),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                date != null ? _dateFormat.format(date!) : label,
-                style: TextStyle(
-                  color: date != null ? Colors.white : Colors.white60,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+            Text(
+              date != null ? _fullDateFormat.format(date!) : label,
+              style: TextStyle(
+                color: date != null ? Colors.black87 : Colors.grey,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -527,136 +858,32 @@ class _DatePickerBox extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Transaction Row (Global View)
-// ---------------------------------------------------------------------------
-
-class _TransactionRow extends StatelessWidget {
-  final CustomerSummary summary;
-  const _TransactionRow({required this.summary});
+// ── Empty State ──
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
 
   @override
   Widget build(BuildContext context) {
-    final hasGave = summary.totalDebit > 0;
-    final hasGot = summary.totalCredit > 0;
-
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.grey.shade200, width: 0.5),
-        ),
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            // Left — Customer info
-            Expanded(
-              flex: 3,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      summary.customerName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                        color: Colors.black87,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      summary.lastTransactionDate != null
-                          ? _dateFormat.format(summary.lastTransactionDate!)
-                          : '${summary.transactionCount} entries',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Right — Gave column
-            Container(
-              width: 90,
-              color: hasGave ? const Color(0xFFFFF0F0) : null,
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-              child: hasGave
-                  ? Text(
-                      _currency.format(summary.totalDebit),
-                      style: const TextStyle(
-                        color: Color(0xFFC62828),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : const SizedBox.shrink(),
-            ),
-            // Right — Got column
-            Container(
-              width: 90,
-              color: hasGot ? const Color(0xFFF0FFF0) : null,
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-              child: hasGot
-                  ? Text(
-                      _currency.format(summary.totalCredit),
-                      style: const TextStyle(
-                        color: Color(0xFF2E7D32),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : const SizedBox.shrink(),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Empty state
-// ---------------------------------------------------------------------------
-
-class _EmptyReportsState extends StatelessWidget {
-  const _EmptyReportsState();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 60),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.bar_chart_rounded, size: 72, color: Colors.grey.shade300),
+          Icon(Icons.receipt_long_rounded, size: 64, color: Colors.grey.shade300),
           const SizedBox(height: 16),
           Text(
-            'No data yet',
+            'No transactions found',
             style: TextStyle(
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.bold,
               color: Colors.grey.shade600,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            'Add customers and transactions\nto see your ledger report.',
+            'Add transactions to see your\naccount statement here.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
           ),
         ],
       ),

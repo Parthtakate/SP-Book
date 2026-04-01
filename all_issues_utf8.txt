@@ -1,0 +1,67 @@
+﻿Analyzing khata_app...                                          
+
+warning - Unused import: 'db_provider.dart' - lib\providers\customer_last_transaction_provider.dart:2:8 - unused_import
+  error - Undefined name 'ref' - lib\providers\reports_provider.dart:101:21 - undefined_identifier
+  error - Undefined name 'ref' - lib\providers\reports_provider.dart:102:22 - undefined_identifier
+  error - Undefined name 'ref' - lib\providers\reports_provider.dart:103:14 - undefined_identifier
+   info - Missing type annotation - lib\providers\reports_provider.dart:117:3 - strict_top_level_inference
+  error - 'for' can't be used as an identifier because it's a keyword - lib\providers\reports_provider.dart:117:3 - expected_identifier_but_got_keyword
+   info - Missing type annotation - lib\providers\reports_provider.dart:117:14 - strict_top_level_inference
+  error - Expected to find ')' - lib\providers\reports_provider.dart:117:16 - expected_token
+   info - Missing type annotation - lib\providers\reports_provider.dart:120:3 - strict_top_level_inference
+  error - 'for' can't be used as an identifier because it's a keyword - lib\providers\reports_provider.dart:120:3 - expected_identifier_but_got_keyword
+  error - The name 'for' is already defined - lib\providers\reports_provider.dart:120:3 - duplicate_definition
+   info - Missing type annotation - lib\providers\reports_provider.dart:120:14 - strict_top_level_inference
+  error - Expected to find ')' - lib\providers\reports_provider.dart:120:19 - expected_token
+   info - Missing type annotation - lib\providers\reports_provider.dart:126:3 - strict_top_level_inference
+  error - 'for' can't be used as an identifier because it's a keyword - lib\providers\reports_provider.dart:126:3 - expected_identifier_but_got_keyword
+  error - The name 'for' is already defined - lib\providers\reports_provider.dart:126:3 - duplicate_definition
+   info - Missing type annotation - lib\providers\reports_provider.dart:126:14 - strict_top_level_inference
+  error - Expected to find ')' - lib\providers\reports_provider.dart:126:23 - expected_token
+  error - A continue statement can't be used outside of a loop or switch statement - lib\providers\reports_provider.dart:130:7 - continue_outside_of_loop
+   info - Missing type annotation - lib\providers\reports_provider.dart:204:3 - strict_top_level_inference
+  error - Functions must have an explicit list of parameters - lib\providers\reports_provider.dart:204:3 - missing_function_parameters
+  error - The name 'perCustomer' is already defined - lib\providers\reports_provider.dart:204:3 - duplicate_definition
+  error - A function body must be provided - lib\providers\reports_provider.dart:204:14 - missing_function_body
+  error - Expected a method, getter, setter or operator declaration - lib\providers\reports_provider.dart:204:14 - expected_executable
+   info - Missing type annotation - lib\providers\reports_provider.dart:204:15 - strict_top_level_inference
+   info - Use the generic function type syntax to declare the parameter '' - lib\providers\reports_provider.dart:204:20 - use_function_type_syntax_for_parameters
+  error - Expected an identifier - lib\providers\reports_provider.dart:204:20 - missing_identifier
+  error - Expected to find ')' - lib\providers\reports_provider.dart:204:27 - expected_token
+  error - A function body must be provided - lib\providers\reports_provider.dart:204:73 - missing_function_body
+   info - An uninitialized variable should have an explicit type annotation - lib\providers\reports_provider.dart:209:3 - prefer_typing_uninitialized_variables
+   info - Missing type annotation - lib\providers\reports_provider.dart:209:3 - strict_top_level_inference
+  error - 'return' can't be used as an identifier because it's a keyword - lib\providers\reports_provider.dart:209:3 - expected_identifier_but_got_keyword
+  error - Expected to find ';' - lib\providers\reports_provider.dart:209:3 - expected_token
+  error - Variables must be declared using the keywords 'const', 'final', 'var' or a type name - lib\providers\reports_provider.dart:209:3 - missing_const_final_var_or_type
+   info - Missing type annotation - lib\providers\reports_provider.dart:209:10 - strict_top_level_inference
+   info - The variable name 'ReportsSummary' isn't a lowerCamelCase identifier - lib\providers\reports_provider.dart:209:10 - non_constant_identifier_names
+  error - The name 'ReportsSummary' is already defined - lib\providers\reports_provider.dart:209:10 - duplicate_definition
+   info - Missing type annotation - lib\providers\reports_provider.dart:210:5 - strict_top_level_inference
+  error - Named parameters must be enclosed in curly braces ('{' and '}') - lib\providers\reports_provider.dart:210:16 - named_parameter_outside_group
+  error - Using a colon as the separator before a default value is no longer supported - lib\providers\reports_provider.dart:210:16 - obsolete_colon_for_default_value
+  error - The default value of an optional parameter must be constant - lib\providers\reports_provider.dart:210:18 - non_constant_default_value
+   info - Missing type annotation - lib\providers\reports_provider.dart:211:5 - strict_top_level_inference
+  error - Named parameters must be enclosed in curly braces ('{' and '}') - lib\providers\reports_provider.dart:211:15 - named_parameter_outside_group
+  error - Using a colon as the separator before a default value is no longer supported - lib\providers\reports_provider.dart:211:15 - obsolete_colon_for_default_value
+  error - The default value of an optional parameter must be constant - lib\providers\reports_provider.dart:211:17 - non_constant_default_value
+   info - Missing type annotation - lib\providers\reports_provider.dart:212:5 - strict_top_level_inference
+  error - Named parameters must be enclosed in curly braces ('{' and '}') - lib\providers\reports_provider.dart:212:8 - named_parameter_outside_group
+  error - Using a colon as the separator before a default value is no longer supported - lib\providers\reports_provider.dart:212:8 - obsolete_colon_for_default_value
+  error - The default value of an optional parameter must be constant - lib\providers\reports_provider.dart:212:10 - non_constant_default_value
+   info - Missing type annotation - lib\providers\reports_provider.dart:213:5 - strict_top_level_inference
+  error - Named parameters must be enclosed in curly braces ('{' and '}') - lib\providers\reports_provider.dart:213:17 - named_parameter_outside_group
+  error - Using a colon as the separator before a default value is no longer supported - lib\providers\reports_provider.dart:213:17 - obsolete_colon_for_default_value
+  error - The default value of an optional parameter must be constant - lib\providers\reports_provider.dart:213:19 - non_constant_default_value
+   info - Missing type annotation - lib\providers\reports_provider.dart:214:5 - strict_top_level_inference
+  error - Named parameters must be enclosed in curly braces ('{' and '}') - lib\providers\reports_provider.dart:214:16 - named_parameter_outside_group
+  error - Using a colon as the separator before a default value is no longer supported - lib\providers\reports_provider.dart:214:16 - obsolete_colon_for_default_value
+  error - The default value of an optional parameter must be constant - lib\providers\reports_provider.dart:214:18 - non_constant_default_value
+  error - A function body must be provided - lib\providers\reports_provider.dart:215:4 - missing_function_body
+  error - Expected a method, getter, setter or operator declaration - lib\providers\reports_provider.dart:216:1 - expected_executable
+  error - Expected a method, getter, setter or operator declaration - lib\providers\reports_provider.dart:216:2 - expected_executable
+  error - Unexpected text ';' - lib\providers\reports_provider.dart:216:3 - unexpected_token
+  error - Undefined name 'reportsProvider' - lib\providers\transaction_provider.dart:66:20 - undefined_identifier
+  error - Undefined name 'reportsProvider' - lib\ui\reports\reports_screen.dart:97:29 - undefined_identifier
+  error - Undefined name 'reportsProvider' - lib\ui\reports\reports_screen.dart:179:30 - undefined_identifier
+

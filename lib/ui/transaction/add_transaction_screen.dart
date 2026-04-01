@@ -31,7 +31,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   void initState() {
     super.initState();
     if (widget.existingTransaction != null) {
-      _amount = widget.existingTransaction!.amount;
+      _amount = widget.existingTransaction!.amountInPaise / 100.0;
       _note = widget.existingTransaction!.note;
       if (widget.existingTransaction!.imagePath != null) {
         _selectedImage = File(widget.existingTransaction!.imagePath!);
@@ -94,7 +94,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         final updatedTx = TransactionModel(
           id: widget.existingTransaction!.id,
           customerId: widget.existingTransaction!.customerId,
-          amount: _amount,
+          amountInPaise: (_amount * 100).round(),
           isGot: widget.isGot,
           note: _note,
           date: widget.existingTransaction!.date,
@@ -105,7 +105,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       } else {
         await ref.read(transactionServiceProvider).addTransaction(
           customerId: widget.customer.id,
-          amount: _amount,
+          amountInPaise: (_amount * 100).round(),
           isGot: widget.isGot,
           note: _note,
           imagePath: permanentImagePath,
@@ -149,7 +149,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               TextFormField(
-                initialValue: widget.existingTransaction != null ? ((widget.existingTransaction!.amount - widget.existingTransaction!.amount.roundToDouble()).abs() < 0.001 ? widget.existingTransaction!.amount.toInt().toString() : widget.existingTransaction!.amount.toString()) : null,
+                initialValue: widget.existingTransaction != null ? (((widget.existingTransaction!.amountInPaise / 100.0) - (widget.existingTransaction!.amountInPaise / 100.0).roundToDouble()).abs() < 0.001 ? (widget.existingTransaction!.amountInPaise / 100.0).toInt().toString() : (widget.existingTransaction!.amountInPaise / 100.0).toString()) : null,
                 decoration: const InputDecoration(
                   labelText: 'Amount (₹)',
                   border: OutlineInputBorder(),

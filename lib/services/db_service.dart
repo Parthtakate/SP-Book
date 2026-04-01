@@ -4,27 +4,28 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:convert';
 import '../models/customer.dart';
 import '../models/transaction.dart';
-
 class DbService {
-  static const String _customersBox = 'customers_box';
-  static const String _transactionsBox = 'transactions_box_v2';
-  static const String _settingsBox = 'settings_box';
-  static const String _syncQueueBox = 'sync_queue_box';
+  static const String _customersBox = 'customers';
+  static const String _transactionsBox = 'transactions';
+  static const String _settingsBox = 'settings';
   
   static Box<Customer>? _customers;
   static Box<TransactionModel>? _transactions;
   static Box? _settings;
-  static Box<String>? _syncQueue;
+
+  /// Flag to indicate when a restore operation is actively modifying Hive,
+  /// so that we can ignore these changes in our auto-sync watcher.
+  bool isRestoring = false;
 
   Future<void> init() async {
     await Hive.initFlutter();
     
-    // Register Adapters
-    if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(CustomerAdapter());
-    if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(TransactionModelAdapter());
-
     // Generate or fetch encryption key
     final encryptionCipher = await _getEncryptionCipher();
+
+    // Register Adapters
+    if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(CustomerAdapter());
+    if (!Hive.isAdapterRegistered(2)) Hive.registerAdapter(TransactionModelAdapter());
 
     // Open boxes
     _customers = await Hive.openBox<Customer>(
@@ -36,15 +37,8 @@ class DbService {
       encryptionCipher: encryptionCipher
     );
 
-    // Settings box (unencrypted — stores simple flags like onboarding state)
+    // Settings box (unencrypted — stores simple flags)
     _settings = await Hive.openBox(_settingsBox);
-
-    // Sync queue (unencrypted — stores small pending operation payloads)
-    // Encrypt queued ops too, so local storage doesn't leak ledger data.
-    _syncQueue = await Hive.openBox<String>(
-      _syncQueueBox,
-      encryptionCipher: encryptionCipher,
-    );
   }
 
   Future<HiveCipher?> _getEncryptionCipher() async {
@@ -74,6 +68,26 @@ class DbService {
 
   Future<void> setOnboardingCompleted(bool value) async {
     await _settings?.put('hasCompletedOnboarding', value);
+  }
+
+  bool get isLoggedIn =>
+      _settings?.get('isLoggedIn', defaultValue: false) ?? false;
+
+  Future<void> setLoggedIn(bool value) async {
+    await _settings?.put('isLoggedIn', value);
+  }
+
+  String? getBusinessName() => _settings?.get('businessName') as String?;
+
+  Future<void> setBusinessName(String name) async {
+    await _settings?.put('businessName', name);
+  }
+
+  int get lastLocalModifiedAt =>
+      _settings?.get('lastLocalModifiedAt', defaultValue: 0) as int;
+
+  Future<void> setLastLocalModifiedAt(int timestamp) async {
+    await _settings?.put('lastLocalModifiedAt', timestamp);
   }
 
   // --- Customers ---
@@ -138,14 +152,5 @@ class DbService {
     }
     await _customers!.clear();
     await _transactions!.clear();
-
-    // Clear any pending cloud-sync operations to avoid replaying stale writes.
-    await _syncQueue?.clear();
-  }
-
-  Box<String> get syncQueueBox => _syncQueue!;
-
-  Future<void> clearSyncQueue() async {
-    await _syncQueue?.clear();
   }
 }

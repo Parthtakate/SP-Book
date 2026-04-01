@@ -6,21 +6,23 @@ class Customer {
   final String name;
   final String? phone;
   final DateTime createdAt;
-  // V3 — appended field for cloud sync conflict resolution (nullable for backward compat)
   final DateTime? updatedAt;
+  final bool isDeleted;
 
-  Customer({
+  const Customer({
     required this.id,
     required this.name,
     this.phone,
     required this.createdAt,
     this.updatedAt,
+    this.isDeleted = false,
   });
 
   Customer copyWith({
     String? name,
     String? phone,
     DateTime? updatedAt,
+    bool? isDeleted,
   }) {
     return Customer(
       id: id,
@@ -28,6 +30,7 @@ class Customer {
       phone: phone ?? this.phone,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isDeleted: isDeleted ?? this.isDeleted,
     );
   }
 
@@ -35,47 +38,34 @@ class Customer {
     'id': id,
     'name': name,
     'phone': phone,
-    'createdAt': createdAt.millisecondsSinceEpoch,
+    'createdAt': FieldValue.serverTimestamp(),
     'updatedAt': FieldValue.serverTimestamp(),
+    'isDeleted': isDeleted,
   };
 
   factory Customer.fromFirestore(Map<String, dynamic> data) => Customer(
     id: data['id'] as String,
     name: data['name'] as String,
     phone: data['phone'] as String?,
-    createdAt: DateTime.fromMillisecondsSinceEpoch(data['createdAt'] as int),
-    updatedAt: (data['updatedAt'] as Timestamp?)?.toDate(),
+    createdAt: (data['createdAt'] as Timestamp).toDate(),
+    updatedAt: data['updatedAt'] != null ? (data['updatedAt'] as Timestamp).toDate() : null,
+    isDeleted: data['isDeleted'] as bool? ?? false,
   );
 }
 
-// ignore: avoid_classes_with_only_static_members
 class CustomerAdapter extends TypeAdapter<Customer> {
   @override
   final int typeId = 0;
 
   @override
   Customer read(BinaryReader reader) {
-    final id = reader.readString();
-    final name = reader.readString();
-    final dynamic rawPhone = reader.read();
-    final String? phone = rawPhone is String ? rawPhone : null;
-    final createdAt = DateTime.fromMillisecondsSinceEpoch(reader.readInt());
-    // V3: appended field — null-presence flag for backward compat
-    DateTime? updatedAt;
-    try {
-      final hasUpdatedAt = reader.readBool();
-      if (hasUpdatedAt) {
-        updatedAt = DateTime.fromMillisecondsSinceEpoch(reader.readInt());
-      }
-    } catch (_) {
-      // Old data — no updatedAt field, leave as null
-    }
     return Customer(
-      id: id,
-      name: name,
-      phone: phone,
-      createdAt: createdAt,
-      updatedAt: updatedAt,
+      id: reader.readString(),
+      name: reader.readString(),
+      phone: reader.read(),
+      createdAt: DateTime.fromMillisecondsSinceEpoch(reader.readInt()),
+      updatedAt: reader.readBool() ? DateTime.fromMillisecondsSinceEpoch(reader.readInt()) : null,
+      isDeleted: reader.readBool(),
     );
   }
 
@@ -85,10 +75,10 @@ class CustomerAdapter extends TypeAdapter<Customer> {
     writer.writeString(obj.name);
     writer.write(obj.phone);
     writer.writeInt(obj.createdAt.millisecondsSinceEpoch);
-    // V3: appended — null-presence flag
     writer.writeBool(obj.updatedAt != null);
     if (obj.updatedAt != null) {
       writer.writeInt(obj.updatedAt!.millisecondsSinceEpoch);
     }
+    writer.writeBool(obj.isDeleted);
   }
 }

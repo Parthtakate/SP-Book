@@ -1,16 +1,13 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../providers/auth_provider.dart';
-import '../providers/backup_provider.dart';
+import '../providers/auto_sync_provider.dart';
 import '../providers/customer_provider.dart';
 import '../providers/db_provider.dart';
 import '../providers/transaction_provider.dart';
-import '../services/firestore_backup_service.dart';
 import '../services/pdf_service.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -34,7 +31,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     );
     _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
     _animCtrl.forward();
-    _loadBackupInfo();
   }
 
   @override
@@ -46,126 +42,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   // ---------------------------------------------------------------------------
   // Backup / Restore / Auth
   // ---------------------------------------------------------------------------
-  Future<void> _doBackup(BuildContext context) async {
-    if (ref.read(isProcessingProvider)) return;
-    ref.read(isProcessingProvider.notifier).setProcessing(true);
-    ref.read(backupStatusProvider.notifier).updateStatus(BackupStatus.working);
-
-    try {
-      final db = ref.read(dbServiceProvider);
-      await ref.read(firestoreBackupServiceProvider).backupAll(db);
-      final info = await ref
-          .read(firestoreBackupServiceProvider)
-          .getBackupInfo();
-      ref.read(backupInfoProvider.notifier).setInfo(info);
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.success);
-    } on NoInternetException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedNoInternet);
-    } on FirestoreTimeoutException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedTimeout);
-    } on NotSignedInException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedPermission);
-    } on FirestorePermissionException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedPermission);
-    } catch (e, stack) {
-      if (kDebugMode) debugPrint('Backup Error: $e\n$stack');
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedUnknown);
-    } finally {
-      ref.read(isProcessingProvider.notifier).setProcessing(false);
-    }
-  }
-
-  Future<void> _doRestore(BuildContext context) async {
-    if (ref.read(isProcessingProvider)) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Restore from Cloud?',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        content: const Text(
-          'This will CLEAR all local data and replace it with your cloud backup. Cannot be undone.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('CANCEL'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('RESTORE'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    ref.read(isProcessingProvider.notifier).setProcessing(true);
-    ref.read(backupStatusProvider.notifier).updateStatus(BackupStatus.working);
-
-    try {
-      final db = ref.read(dbServiceProvider);
-      await ref.read(firestoreBackupServiceProvider).restoreAll(db);
-
-      // `restoreAll()` writes directly into Hive. Riverpod lists are driven
-      // by provider signals (`customersProvider` state and
-      // `anyTransactionChangeProvider`). Without explicitly invalidating /
-      // notifying, the UI may only refresh after a full app restart.
-      ref.invalidate(customersProvider);
-      ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
-
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.success);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ Restore complete!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } on NoInternetException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedNoInternet);
-    } on FirestoreTimeoutException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedTimeout);
-    } on FirestorePermissionException {
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedPermission);
-    } catch (e, stack) {
-      if (kDebugMode) debugPrint('Restore Error: $e\n$stack');
-      ref
-          .read(backupStatusProvider.notifier)
-          .updateStatus(BackupStatus.failedUnknown);
-    } finally {
-      ref.read(isProcessingProvider.notifier).setProcessing(false);
-    }
-  }
-
   Future<void> _signIn() async {
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
-      _loadBackupInfo();
+      await ref.read(dbServiceProvider).setLoggedIn(true);
+      // AutoSyncService picks this up and does a startup conflict check
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -176,30 +57,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   }
 
   Future<void> _signOut() async {
-    await ref.read(authServiceProvider).signOut();
+    // Show loading indicator to the user while we trigger a final backup
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Syncing data before signing out...'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
 
-    // Clear local encrypted Hive data so the next sign-in starts fresh.
-    final db = ref.read(dbServiceProvider);
-    await db.clearAll();
-
-    // Reset onboarding flag so the login screen shows again for new users.
-    await db.setOnboardingCompleted(false);
-
-    // Force-refresh provider-driven UI lists/counters.
-    ref.invalidate(customersProvider);
-    ref.read(anyTransactionChangeProvider.notifier).notifyChanged();
-
-    ref.read(backupStatusProvider.notifier).updateStatus(BackupStatus.idle);
-    ref.read(backupInfoProvider.notifier).setInfo(null);
-  }
-
-  Future<void> _loadBackupInfo() async {
+    // Trigger one final backup to ensure cloud is up to date before leaving.
+    // We intentionally do NOT clear local data — Hive is the persistent cache
+    // and will restore correctly on the next sign-in via the startup sync check.
     try {
-      final info = await ref
-          .read(firestoreBackupServiceProvider)
-          .getBackupInfo();
-      ref.read(backupInfoProvider.notifier).setInfo(info);
-    } catch (_) {}
+      final db = ref.read(dbServiceProvider);
+      final backupService = ref.read(firestoreBackupServiceProvider);
+      await backupService.backupAll(db);
+    } catch (_) {
+      // Best-effort: even if this fails, we still sign out safely.
+    }
+
+    final db = ref.read(dbServiceProvider);
+    await ref.read(authServiceProvider).signOut();
+    
+    // Clear local data so user is fully logged out and data refreshes on next login
+    await db.clearAll();
+    await db.setOnboardingCompleted(false);
+    await db.setLoggedIn(false);
+    await db.setLastLocalModifiedAt(0);
+
+    // Invalidate UI providers
+    ref.invalidate(customersProvider);
+    ref.invalidate(dashboardBalancesProvider);
   }
 
   Future<void> _exportFullPdf(BuildContext context) async {
@@ -236,52 +126,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
   @override
   Widget build(BuildContext context) {
     final userAsync = ref.watch(currentUserProvider);
-    final status = ref.watch(backupStatusProvider);
-    final isProcessing = ref.watch(isProcessingProvider);
-    final backupInfo = ref.watch(backupInfoProvider);
+    final autoSyncState = ref.watch(autoSyncProvider);
     final customers = ref.watch(customersProvider);
     final balances = ref.watch(dashboardBalancesProvider);
     final currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: const Color(0xFFF1F5F9), // Softer, more modern background (Tailwind slate-100)
       body: FadeTransition(
         opacity: _fadeAnim,
         child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
           slivers: [
-            // ---- Gradient SliverAppBar
+            // ---- Premium Gradient SliverAppBar
             SliverAppBar(
-              expandedHeight: 220,
+              expandedHeight: 240,
               pinned: true,
-              backgroundColor: const Color(0xFF005CEE),
+              stretch: true,
+              backgroundColor: const Color(0xFF0F172A), // Deep modern dark blue
               foregroundColor: Colors.white,
               flexibleSpace: FlexibleSpaceBar(
+                stretchModes: const [StretchMode.zoomBackground, StretchMode.blurBackground],
                 background: _ProfileHeader(userAsync: userAsync),
               ),
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.logout_rounded),
-                  tooltip: 'Sign Out',
-                  onPressed: () => userAsync.when(
-                    data: (u) {
-                      if (u != null) _signOut();
-                    },
-                    loading: () {},
-                    error: (error, stackTrace) {},
-                  ),
+                userAsync.when(
+                  data: (u) => u != null
+                      ? IconButton(
+                          icon: const Icon(Icons.logout_rounded, color: Colors.white),
+                          tooltip: 'Sign Out',
+                          onPressed: () => _signOut(),
+                        )
+                      : const SizedBox.shrink(),
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
                 ),
               ],
             ),
 
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // ---- Stats Row
-                    _SectionLabel('Overview'),
-                    const SizedBox(height: 10),
+                    _SectionLabel('Your Overview'),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
                         Expanded(
@@ -289,7 +180,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                             label: 'Customers',
                             value: '${customers.length}',
                             icon: Icons.people_alt_rounded,
-                            color: const Color(0xFF005CEE),
+                            color: const Color(0xFF3B82F6), // Blue
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -297,8 +188,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                           child: _StatCard(
                             label: 'To Receive',
                             value: currency.format(balances['toReceive'] ?? 0),
-                            icon: Icons.arrow_downward_rounded,
-                            color: const Color(0xFF2E7D32),
+                            icon: Icons.south_west_rounded,
+                            color: const Color(0xFF10B981), // Emerald
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -306,145 +197,148 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                           child: _StatCard(
                             label: 'To Pay',
                             value: currency.format(balances['toPay'] ?? 0),
-                            icon: Icons.arrow_upward_rounded,
-                            color: const Color(0xFFC62828),
+                            icon: Icons.north_east_rounded,
+                            color: const Color(0xFFEF4444), // Red
                           ),
                         ),
                       ],
                     ),
 
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 32),
 
-                    // ---- Export PDF
-                    _SectionLabel('Export'),
-                    const SizedBox(height: 10),
-                    _ActionCard(
-                      icon: Icons.picture_as_pdf_rounded,
-                      iconColor: Colors.red.shade600,
-                      title: 'Export Full Report',
-                      subtitle: 'All customers & transactions as PDF',
-                      onTap: () => _exportFullPdf(context),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // ---- Cloud Backup (only when signed in)
-                    _SectionLabel('Cloud Sync'),
-                    const SizedBox(height: 10),
-
-                    userAsync.when(
-                      loading: () => const Center(
-                        child: CircularProgressIndicator.adaptive(),
+                    // ---- Account & Backup Card
+                    _SectionLabel('Data & Sync'),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      error: (error, stackTrace) =>
-                          const Text('Error loading account.'),
-                      data: (User? user) {
-                        if (user == null) {
-                          return _ActionCard(
-                            icon: Icons.login_rounded,
-                            iconColor: const Color(0xFF005CEE),
-                            title: 'Sign in with Google',
-                            subtitle: 'Enable cloud backup for your data',
-                            onTap: _signIn,
-                          );
-                        }
-                        return Column(
-                          children: [
-                            // Backup info card
-                            if (backupInfo != null)
-                              _BackupInfoCard(info: backupInfo)
-                            else
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 10),
-                                child: Text(
-                                  'No backup found for this account.',
-                                  style: TextStyle(
-                                    color: Colors.grey.shade500,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-
-                            // Status
-                            _StatusWidget(status: status, onReconnect: _signIn),
-                            if (status != BackupStatus.idle)
-                              const SizedBox(height: 10),
-
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: Colors.blue.shade50),
-                              ),
-                              child: Column(
-                                children: [
-                                  _GradientButton(
-                                    label: isProcessing
-                                        ? 'Working...'
-                                        : 'Update to Cloud',
-                                    icon: isProcessing
-                                        ? null
-                                        : Icons.cloud_upload_rounded,
-                                    isLoading: isProcessing,
-                                    onTap: isProcessing
-                                        ? null
-                                        : () => _doBackup(context),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Uploads latest local data to your Google account.',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  OutlinedButton.icon(
-                                    icon: const Icon(
-                                      Icons.cloud_download_rounded,
-                                    ),
-                                    label: const Text('Restore from Cloud'),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.red,
-                                      side: const BorderSide(color: Colors.red),
-                                      minimumSize: const Size.fromHeight(50),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: isProcessing
-                                        ? null
-                                        : () => _doRestore(context),
-                                  ),
-                                ],
+                      child: Column(
+                        children: [
+                          userAsync.when(
+                            loading: () => const Padding(
+                              padding: EdgeInsets.all(24.0),
+                              child: Center(
+                                child: CircularProgressIndicator.adaptive(),
                               ),
                             ),
-                          ],
-                        );
-                      },
+                            error: (error, stackTrace) =>
+                                const Text('Error loading account.'),
+                            data: (User? user) {
+                              final db = ref.read(dbServiceProvider);
+                              if (user == null && !db.isLoggedIn) {
+                                return _ActionCard(
+                                  icon: Icons.g_mobiledata_rounded,
+                                  iconColor: const Color(0xFF3B82F6),
+                                  title: 'Sign in with Google',
+                                  subtitle: 'Enable seamless cloud backup',
+                                  onTap: _signIn,
+                                );
+                              }
+                              // We modified AutoSyncStatusCard to be borderless
+                              return Padding(
+                                padding: const EdgeInsets.all(4.0),
+                                child: _AutoSyncStatusCard(syncState: autoSyncState),
+                              );
+                            },
+                          ),
+                          const Divider(height: 1, indent: 64),
+                          _ActionCard(
+                            icon: Icons.picture_as_pdf_rounded,
+                            iconColor: const Color(0xFFEF4444),
+                            title: 'Export Full Report',
+                            subtitle: 'Download your ledger as a PDF file',
+                            onTap: () => _exportFullPdf(context),
+                          ),
+                        ],
+                      ),
                     ),
 
-                    const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.lock_outline,
-                          size: 13,
-                          color: Colors.grey,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Your data is end-to-end secured with Google.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade500,
-                          ),
-                        ),
-                      ],
-                    ),
                     const SizedBox(height: 32),
+
+                    // ---- About Section
+                    _SectionLabel('About Khata App'),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          _ActionCard(
+                            icon: Icons.star_rounded,
+                            iconColor: const Color(0xFFF59E0B),
+                            title: 'Rate Us',
+                            subtitle: 'Love the app? Leave a review',
+                            onTap: () {
+                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Thanks for your support!')));
+                            },
+                          ),
+                          const Divider(height: 1, indent: 64),
+                          _ActionCard(
+                            icon: Icons.share_rounded,
+                            iconColor: const Color(0xFF10B981),
+                            title: 'Share Khata App',
+                            subtitle: 'Recommend us to your merchant friends',
+                            onTap: () {
+                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Share feature coming soon!')));
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
+                    Center(
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.lock_outline_rounded,
+                                size: 14,
+                                color: Colors.grey,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'End-to-End Secured by Google Firebase',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey.shade500,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Version 1.0.0',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey.shade400,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 40),
                   ],
                 ),
               ),
@@ -460,27 +354,63 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 // Profile Header (inside SliverAppBar)
 // ---------------------------------------------------------------------------
 
-class _ProfileHeader extends StatelessWidget {
+class _ProfileHeader extends ConsumerWidget {
   final AsyncValue<User?> userAsync;
 
   const _ProfileHeader({required this.userAsync});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF003DA0), Color(0xFF005CEE), Color(0xFF1A7CFF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+        color: Color(0xFF0F172A), // Removed gradient, went with solid deep dark blue for modern minimalist edge
+        image: DecorationImage(
+          image: NetworkImage('https://www.transparenttextures.com/patterns/cubes.png'),
+          opacity: 0.1,
+          repeat: ImageRepeat.repeat,
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(20, 80, 20, 20),
+      padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
       child: userAsync.when(
         loading: () => const SizedBox.shrink(),
         error: (error, stackTrace) => const SizedBox.shrink(),
         data: (User? user) {
+          final db = ref.read(dbServiceProvider);
           if (user == null) {
+            if (db.isLoggedIn) {
+               return Column(
+                 mainAxisAlignment: MainAxisAlignment.center,
+                 children: [
+                   Container(
+                     width: 72,
+                     height: 72,
+                     decoration: BoxDecoration(
+                       color: Colors.white.withValues(alpha: 0.15),
+                       shape: BoxShape.circle,
+                     ),
+                     child: const Icon(
+                       Icons.account_circle,
+                       color: Colors.white,
+                       size: 36,
+                     ),
+                   ),
+                   const SizedBox(height: 12),
+                   const Text(
+                     'Your Account (Offline)',
+                     style: TextStyle(
+                       color: Colors.white,
+                       fontSize: 20,
+                       fontWeight: FontWeight.bold,
+                     ),
+                   ),
+                   const SizedBox(height: 4),
+                   const Text(
+                     'Waiting for internet to sync',
+                     style: TextStyle(color: Colors.orange, fontSize: 13),
+                   ),
+                 ],
+               );
+            }
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -722,16 +652,9 @@ class _ActionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: const BoxDecoration(
+            color: Colors.transparent, // Let master card handle background
           ),
           child: Row(
             children: [
@@ -777,213 +700,99 @@ class _ActionCard extends StatelessWidget {
   }
 }
 
-class _GradientButton extends StatelessWidget {
-  final String label;
-  final IconData? icon;
-  final bool isLoading;
-  final VoidCallback? onTap;
+// Removed _GradientButton
 
-  const _GradientButton({
-    required this.label,
-    required this.isLoading,
-    required this.onTap,
-    this.icon,
-  });
+// Removed _BackupInfoCard
+
+class _AutoSyncStatusCard extends StatelessWidget {
+  final AutoSyncState syncState;
+
+  const _AutoSyncStatusCard({required this.syncState});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: Material(
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: LinearGradient(
-                colors: onTap == null
-                    ? [Colors.grey.shade300, Colors.grey.shade300]
-                    : [const Color(0xFF005CEE), const Color(0xFF1A7CFF)],
-              ),
-            ),
-            child: Center(
-              child: isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (icon != null)
-                          Icon(icon, color: Colors.white, size: 18),
-                        if (icon != null) const SizedBox(width: 8),
-                        Text(
-                          label,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ],
-                    ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BackupInfoCard extends StatelessWidget {
-  final Map<String, dynamic> info;
-  const _BackupInfoCard({required this.info});
-
-  @override
-  Widget build(BuildContext context) {
-    final ts = info['lastBackupAt'];
-    String timeStr = 'Unknown';
-    if (ts != null) {
-      final DateTime dt;
-      if (ts is DateTime) {
-        dt = ts;
-      } else {
-        dt = (ts as Timestamp).toDate();
-      }
-      timeStr = DateFormat('dd MMM yyyy, hh:mm a').format(dt);
-    }
-    final customers = info['totalCustomers'] ?? 0;
-    final transactions = info['totalTransactions'] ?? 0;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.green.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.green.shade200),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.check_circle_rounded,
-            color: Colors.green.shade600,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Last backup: $timeStr',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$customers customers · $transactions transactions',
-                  style: const TextStyle(color: Colors.grey, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusWidget extends StatelessWidget {
-  final BackupStatus status;
-  final VoidCallback? onReconnect;
-  const _StatusWidget({required this.status, this.onReconnect});
-
-  @override
-  Widget build(BuildContext context) {
-    if (status == BackupStatus.idle) return const SizedBox.shrink();
-    if (status == BackupStatus.working) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 10),
-            Text('Backing up to cloud...'),
-          ],
-        ),
-      );
+    String timeStr = 'Never';
+    if (syncState.lastSyncedAt != null) {
+      timeStr = DateFormat('dd MMM, hh:mm a').format(syncState.lastSyncedAt!);
     }
 
     late IconData icon;
     late Color color;
-    late String message;
+    late String statusText;
+    bool showSpinner = false;
 
-    switch (status) {
-      case BackupStatus.success:
-        icon = Icons.check_circle_rounded;
-        color = Colors.green;
-        message = 'Backup successful!';
-      case BackupStatus.failedTimeout:
-        icon = Icons.timer_off_rounded;
+    switch (syncState.status) {
+      case SyncStatus.idle:
+      case SyncStatus.synced:
+        icon = Icons.cloud_done_rounded;
+        color = Colors.green.shade600;
+        statusText = 'Up to date';
+        break;
+      case SyncStatus.syncing:
+        icon = Icons.cloud_sync_rounded;
+        color = const Color(0xFF005CEE);
+        statusText = 'Syncing...';
+        showSpinner = true;
+        break;
+      case SyncStatus.offline:
+        icon = Icons.cloud_off_rounded;
         color = Colors.orange;
-        message = 'Connection timed out. Please try again.';
-      case BackupStatus.failedNoInternet:
-        icon = Icons.wifi_off_rounded;
-        color = Colors.orange;
-        message = 'No internet connection. Check and retry.';
-      case BackupStatus.failedPermission:
-        icon = Icons.lock_person_rounded;
-        color = Colors.red;
-        message = 'Session issue detected. Reconnect Google and retry.';
-      case BackupStatus.failedUnknown:
+        statusText = 'Offline (waiting)';
+        break;
+      case SyncStatus.failed:
         icon = Icons.error_outline_rounded;
         color = Colors.red;
-        message = 'Something went wrong. Please retry.';
-      default:
-        return const SizedBox.shrink();
+        statusText = 'Sync failed';
+        break;
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: const BoxDecoration(
+        color: Colors.transparent, // Let parent card handle color/borders
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 18),
-              const SizedBox(width: 8),
+              if (showSpinner)
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: color,
+                  ),
+                )
+              else
+                Icon(icon, color: color, size: 22),
+              const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(color: color, fontWeight: FontWeight.w500),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                     const Text(
+                       'Auto-Sync Enabled',
+                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                     ),
+                     const SizedBox(height: 2),
+                     Text(
+                       'Status: $statusText',
+                       style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500),
+                     ),
+                  ],
                 ),
               ),
             ],
           ),
-          if (status == BackupStatus.failedPermission &&
-              onReconnect != null) ...[
-            const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: onReconnect,
-              icon: const Icon(Icons.login_rounded, size: 18),
-              label: const Text('Reconnect Google'),
-            ),
-          ],
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          Text(
+            'Last synced: $timeStr',
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          ),
         ],
       ),
     );

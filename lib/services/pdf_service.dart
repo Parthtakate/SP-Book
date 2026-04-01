@@ -9,14 +9,17 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/customer.dart';
 import '../models/transaction.dart';
+import '../providers/reports_provider.dart';
 
 class PdfService {
   static final _currencyFormat = NumberFormat.currency(
     locale: 'en_IN',
     symbol: '₹',
   );
+  static final _inrFormat = NumberFormat('#,##,##0.00', 'en_IN');
   static final _dateFormat = DateFormat('dd MMM yyyy');
-  static final _dateTimeFormat = DateFormat('dd MMM yyyy, hh:mm a');
+  static final _shortDateFormat = DateFormat('dd MMM');
+  static final _timestampFormat = DateFormat("h:mm a | dd MMM''yy");
 
   static Future<pw.Font>? _pdfBaseFontFuture;
   static Future<pw.Font> _getPdfFont() {
@@ -36,6 +39,354 @@ class PdfService {
   
   static const _greenColor = PdfColor.fromInt(0xFF2E7D32); // You will get / You Got / Received
   static const _redColor = PdfColor.fromInt(0xFFC62828); // You will give / You Gave / Given
+
+  // =========================================================================
+  // 0. ACCOUNT STATEMENT (KHATABOOK-STYLE)
+  // =========================================================================
+  static Future<String?> generateAccountStatementPdf({
+    required String userName,
+    required AccountStatement statement,
+    DateTimeRange? dateRange,
+  }) async {
+    final font = await _getPdfFont();
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(base: font, bold: font),
+    );
+
+    final String rangeLabel = dateRange != null
+        ? '${_dateFormat.format(dateRange.start)} - ${_dateFormat.format(dateRange.end)}'
+        : 'All';
+
+    // Colors
+    const headerBg = PdfColor.fromInt(0xFF1A237E);
+    const debitBg = PdfColor.fromInt(0xFFFFF0F0);
+    const creditBg = PdfColor.fromInt(0xFFF0FFF0);
+    const debitColor = PdfColor.fromInt(0xFFC62828);
+    const creditColor = PdfColor.fromInt(0xFF2E7D32);
+    const grey = PdfColor.fromInt(0xFF757575);
+    const lightGrey = PdfColor.fromInt(0xFFF5F5F5);
+    const borderColor = PdfColor.fromInt(0xFFE0E0E0);
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        footer: (context) => pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          children: [
+            pw.Text('Powered by SPBOOKS',
+                style: pw.TextStyle(fontSize: 8, color: grey, fontWeight: pw.FontWeight.bold)),
+            pw.Text('Page ${context.pageNumber} of ${context.pagesCount}',
+                style: const pw.TextStyle(fontSize: 8, color: grey)),
+          ],
+        ),
+        build: (pw.Context context) {
+          final List<pw.Widget> widgets = [];
+
+          // ── Dark blue header bar ──
+          widgets.add(
+            pw.Container(
+              color: headerBg,
+              padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(
+                    userName,
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.Text(
+                    'SPBOOKS',
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 12,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          // ── Title section ──
+          widgets.add(pw.SizedBox(height: 20));
+          widgets.add(
+            pw.Center(
+              child: pw.Column(
+                children: [
+                  pw.Text(
+                    'Account Statement',
+                    style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text('($rangeLabel)', style: const pw.TextStyle(fontSize: 11, color: grey)),
+                ],
+              ),
+            ),
+          );
+
+          // ── Summary cards ──
+          widgets.add(pw.SizedBox(height: 16));
+          widgets.add(
+            pw.Container(
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: borderColor),
+              ),
+              child: pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.all(10),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('Total Debit(-)', style: const pw.TextStyle(fontSize: 9, color: grey)),
+                          pw.SizedBox(height: 4),
+                          pw.Text(
+                            '\u20B9${_inrFormat.format(statement.grandTotalDebit)}',
+                            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  pw.Container(width: 1, height: 40, color: borderColor),
+                  pw.Expanded(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.all(10),
+                      child: pw.Column(
+                        children: [
+                          pw.Text('Total Credit(+)', style: const pw.TextStyle(fontSize: 9, color: grey)),
+                          pw.SizedBox(height: 4),
+                          pw.Text(
+                            '\u20B9${_inrFormat.format(statement.grandTotalCredit)}',
+                            style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  pw.Container(width: 1, height: 40, color: borderColor),
+                  pw.Expanded(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.all(10),
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text('Net Balance', style: const pw.TextStyle(fontSize: 9, color: grey)),
+                          pw.SizedBox(height: 4),
+                          pw.Text(
+                            '\u20B9${_inrFormat.format(statement.netBalance.abs())} ${statement.balanceType}',
+                            style: pw.TextStyle(
+                              fontSize: 13,
+                              fontWeight: pw.FontWeight.bold,
+                              color: statement.balanceType == 'Cr' ? creditColor : debitColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          // ── Entry count ──
+          widgets.add(pw.SizedBox(height: 14));
+          widgets.add(
+            pw.Text(
+              'No. of Entries:  ${statement.entryCount} (${dateRange != null ? "Filtered" : "All"})',
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+            ),
+          );
+          widgets.add(pw.SizedBox(height: 8));
+
+          // ── Table header ──
+          widgets.add(
+            pw.Container(
+              color: const PdfColor.fromInt(0xFFE8E8E8),
+              padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: pw.Row(
+                children: [
+                  pw.SizedBox(width: 50, child: pw.Text('Date', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                  pw.Expanded(flex: 3, child: pw.Text('Name', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                  pw.Expanded(flex: 3, child: pw.Text('Details', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold))),
+                  pw.SizedBox(
+                    width: 80,
+                    child: pw.Text('Debit(-)', textAlign: pw.TextAlign.right,
+                        style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                  ),
+                  pw.SizedBox(
+                    width: 80,
+                    child: pw.Text('Credit(+)', textAlign: pw.TextAlign.right,
+                        style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          // ── Month groups with entries ──
+          for (final group in statement.monthGroups) {
+            // Month header
+            widgets.add(
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 10, bottom: 4, left: 4),
+                child: pw.Text(
+                  group.label,
+                  style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
+                ),
+              ),
+            );
+
+            // Transaction entries
+            for (final entry in group.entries) {
+              widgets.add(
+                pw.Container(
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border(bottom: pw.BorderSide(color: borderColor, width: 0.5)),
+                  ),
+                  padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  child: pw.Row(
+                    children: [
+                      pw.SizedBox(
+                        width: 50,
+                        child: pw.Text(_shortDateFormat.format(entry.date),
+                            style: const pw.TextStyle(fontSize: 9)),
+                      ),
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(entry.customerName,
+                            style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                      ),
+                      pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(entry.details,
+                            style: const pw.TextStyle(fontSize: 9)),
+                      ),
+                      pw.Container(
+                        width: 80,
+                        color: entry.debitAmount > 0 ? debitBg : null,
+                        padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                        child: pw.Text(
+                          entry.debitAmount > 0 ? _inrFormat.format(entry.debitAmount) : '',
+                          textAlign: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: debitColor),
+                        ),
+                      ),
+                      pw.Container(
+                        width: 80,
+                        color: entry.creditAmount > 0 ? creditBg : null,
+                        padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+                        child: pw.Text(
+                          entry.creditAmount > 0 ? _inrFormat.format(entry.creditAmount) : '',
+                          textAlign: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: creditColor),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // Monthly total row
+            final monthName = group.label.split(' ').first;
+            widgets.add(
+              pw.Container(
+                decoration: pw.BoxDecoration(
+                  border: pw.Border(
+                    top: pw.BorderSide(color: borderColor),
+                    bottom: pw.BorderSide(color: borderColor),
+                  ),
+                  color: lightGrey,
+                ),
+                padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                child: pw.Row(
+                  children: [
+                    pw.SizedBox(width: 50),
+                    pw.Expanded(
+                      flex: 3,
+                      child: pw.Text('$monthName Total',
+                          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+                    ),
+                    pw.Expanded(flex: 3, child: pw.SizedBox()),
+                    pw.SizedBox(
+                      width: 80,
+                      child: pw.Text(_inrFormat.format(group.monthTotalDebit),
+                          textAlign: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: debitColor)),
+                    ),
+                    pw.SizedBox(
+                      width: 80,
+                      child: pw.Text(_inrFormat.format(group.monthTotalCredit),
+                          textAlign: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: creditColor)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          // ── Grand total row ──
+          widgets.add(
+            pw.Container(
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: borderColor, width: 1.5),
+                color: lightGrey,
+              ),
+              padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: pw.Row(
+                children: [
+                  pw.SizedBox(width: 50),
+                  pw.Expanded(
+                    flex: 3,
+                    child: pw.Text('Grand Total',
+                        style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                  ),
+                  pw.Expanded(flex: 3, child: pw.SizedBox()),
+                  pw.SizedBox(
+                    width: 80,
+                    child: pw.Text(_inrFormat.format(statement.grandTotalDebit),
+                        textAlign: pw.TextAlign.right,
+                        style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: debitColor)),
+                  ),
+                  pw.SizedBox(
+                    width: 80,
+                    child: pw.Text(_inrFormat.format(statement.grandTotalCredit),
+                        textAlign: pw.TextAlign.right,
+                        style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: creditColor)),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          // ── Timestamp footer ──
+          widgets.add(pw.SizedBox(height: 12));
+          widgets.add(
+            pw.Text(
+              'Report Generated : ${_timestampFormat.format(DateTime.now())}',
+              style: pw.TextStyle(fontSize: 8, color: grey, fontStyle: pw.FontStyle.italic),
+            ),
+          );
+
+          return widgets;
+        },
+      ),
+    );
+
+    final output = await getTemporaryDirectory();
+    final file = File('${output.path}/account_statement.pdf');
+    await file.writeAsBytes(await pdf.save());
+    return file.path;
+  }
 
   // =========================================================================
   // 1. INDIVIDUAL CUSTOMER STATEMENT (LEDGER REPORT)
@@ -71,21 +422,21 @@ class PdfService {
       if (!hasRange) {
         inRangeTxs.add(t);
         if (t.isGot) {
-          totalYouGot += t.amount;
+          totalYouGot += (t.amountInPaise / 100.0);
         } else {
-          totalYouGave += t.amount;
+          totalYouGave += (t.amountInPaise / 100.0);
         }
         continue;
       }
 
       if (d.isBefore(startDay!)) {
-        openingBalance += (!t.isGot ? t.amount : 0) - (t.isGot ? t.amount : 0);
+        openingBalance += (!t.isGot ? (t.amountInPaise / 100.0) : 0) - (t.isGot ? (t.amountInPaise / 100.0) : 0);
       } else if (!d.isAfter(endDay!)) {
         inRangeTxs.add(t);
         if (t.isGot) {
-          totalYouGot += t.amount;
+          totalYouGot += (t.amountInPaise / 100.0);
         } else {
-          totalYouGave += t.amount;
+          totalYouGave += (t.amountInPaise / 100.0);
         }
       }
     }
@@ -185,9 +536,9 @@ class PdfService {
 
       for (final t in txns) {
         if (t.isGot) {
-          youGot += t.amount;
+          youGot += (t.amountInPaise / 100.0);
         } else {
-          youGave += t.amount;
+          youGave += (t.amountInPaise / 100.0);
         }
       }
 
@@ -555,13 +906,13 @@ class PdfService {
         // Transactions
         ...txns.map((t) {
           if (t.isGot) {
-             runningBalance -= t.amount; // You got money, balance (owe you) goes down
+             runningBalance -= (t.amountInPaise / 100.0); // You got money, balance (owe you) goes down
           } else {
-             runningBalance += t.amount; // You gave money, balance (owe you) goes up
+             runningBalance += (t.amountInPaise / 100.0); // You gave money, balance (owe you) goes up
           }
 
-          final gaveText = !t.isGot ? _currencyFormat.format(t.amount) : '';
-          final gotText = t.isGot ? _currencyFormat.format(t.amount) : '';
+          final gaveText = !t.isGot ? _currencyFormat.format(t.amountInPaise / 100.0) : '';
+          final gotText = t.isGot ? _currencyFormat.format(t.amountInPaise / 100.0) : '';
 
           return pw.TableRow(
             decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: _borderGrey, width: 0.5))),
