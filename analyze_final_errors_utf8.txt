@@ -43,6 +43,33 @@ Got dependencies!
 Try `flutter pub outdated` for more information.
 Analyzing khata_app...                                          
 
-  error - Undefined class 'Box' - lib\services\firestore_backup_service.dart:392:61 - undefined_class
+  error - '_FilterModeNotifier' doesn't conform to the bound 'Notifier<FilterMode>' of the type parameter 'NotifierT' - lib\providers\customer_provider.dart:14:34 - type_argument_not_matching_bounds
+  error - Classes can only extend other classes - lib\providers\customer_provider.dart:18:35 - extends_non_class
+warning - The method doesn't override an inherited method - lib\providers\customer_provider.dart:20:14 - override_on_non_overriding_member
+  error - Undefined name 'state' - lib\providers\customer_provider.dart:21:32 - undefined_identifier
+  error - '_SearchQueryNotifier' doesn't conform to the bound 'Notifier<String>' of the type parameter 'NotifierT' - lib\providers\customer_provider.dart:25:34 - type_argument_not_matching_bounds
+  error - Classes can only extend other classes - lib\providers\customer_provider.dart:29:36 - extends_non_class
+warning - The method doesn't override an inherited method - lib\providers\customer_provider.dart:31:10 - override_on_non_overriding_member
+  error - Undefined name 'state' - lib\providers\customer_provider.dart:32:29 - undefined_identifier
+   info - Angle brackets will be interpreted as HTML - lib\providers\transaction_provider.dart:95:16 - unintended_html_in_doc_comment
    info - Unnecessary use of multiple underscores - lib\ui\settings_screen.dart:162:30 - unnecessary_underscores
 
+flutter : 10 issues 
+found. (ran in 9.4s)
+At line:1 char:1
++ flutter analyze > ana
+lyze_final_errors.txt 
+2>&1
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (10 issues fou   
+ nd. (ran in 9.4s):    
+String) [], Remote    
+Exception
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 

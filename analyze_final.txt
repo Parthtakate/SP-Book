@@ -1,0 +1,12 @@
+﻿Analyzing khata_app...
+
+  error - lib\providers\customer_provider.dart:13:57 - 'FilterModeNotifier' doesn't conform to the bound 'Notifier<FilterMode>' of the type parameter 'NotifierT'. Try using a type that is or is a subclass of 'Notifier<FilterMode>'. - type_argument_not_matching_bounds
+  error - lib\providers\customer_provider.dart:17:34 - Classes can only extend other classes. Try specifying a different superclass, or removing the extends clause. - extends_non_class
+  error - lib\providers\customer_provider.dart:20:38 - Undefined name 'state'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
+  error - lib\providers\customer_provider.dart:23:58 - 'SearchQueryNotifier' doesn't conform to the bound 'Notifier<String>' of the type parameter 'NotifierT'. Try using a type that is or is a subclass of 'Notifier<String>'. - type_argument_not_matching_bounds
+  error - lib\providers\customer_provider.dart:27:35 - Classes can only extend other classes. Try specifying a different superclass, or removing the extends clause. - extends_non_class
+  error - lib\providers\customer_provider.dart:30:37 - Undefined name 'state'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
+warning - lib\providers\customer_provider.dart:19:14 - The method doesn't override an inherited method. Try updating this class to match the superclass, or removing the override annotation. - override_on_non_overriding_member
+warning - lib\providers\customer_provider.dart:29:10 - The method doesn't override an inherited method. Try updating this class to match the superclass, or removing the override annotation. - override_on_non_overriding_member
+
+8 issues found.

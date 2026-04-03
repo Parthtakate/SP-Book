@@ -41,8 +41,86 @@ Downloading packages...
 Got dependencies!
 38 packages have newer versions incompatible with dependency constraints.
 Try `flutter pub outdated` for more information.
-Analyzing khata_app...                                          
+Running Gradle task 'assembleRelease'...                        
+flutter : lib/providers
+/customer_provider.dart
+:13:28: Error: 
+Undefined name 
+'StateProvider'.
+At line:1 char:1
++ flutter build apk 
+--release 2>&1 | 
+Out-File -Encoding 
+utf8 build_out_ ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (lib/providers   
+ /c...StateProvider    
+'.:String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+final 
+filterModeProvider = St
+ateProvider.autoDispose
+<FilterMode>(
+                       
+    ^^^^^^^^^^^^^
+lib/providers/customer_
+provider.dart:17:29: 
+Error: Undefined name 
+'StateProvider'.
+final 
+searchQueryProvider = S
+tateProvider.autoDispos
+e<String>(
+                       
+     ^^^^^^^^^^^^^
+lib/providers/transacti
+on_provider.dart:18:5: 
+Error: Method not 
+found: 'ChangeNotifierP
+rovider'.
+    ChangeNotifierProvi
+der<_HiveBoxNotifier>((
+ref) {
+    
+^^^^^^^^^^^^^^^^^^^^^^
+Target kernel_snapshot_
+program failed: 
+Exception
 
-  error - Undefined class 'Box' - lib\services\firestore_backup_service.dart:392:61 - undefined_class
-   info - Unnecessary use of multiple underscores - lib\ui\settings_screen.dart:162:30 - unnecessary_underscores
 
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+Execution failed for 
+task ':app:compileFlutt
+erBuildRelease'.
+> Process 'command 'C:\
+flutter\bin\flutter.bat
+'' finished with 
+non-zero exit value 1
+
+* Try:
+> Run with 
+--stacktrace option to 
+get the stack trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at http
+s://help.gradle.org.
+
+BUILD FAILED in 19s
+Running Gradle task 'assembleRelease'...                           19.7s
+Gradle task 
+assembleRelease failed 
+with exit code 1

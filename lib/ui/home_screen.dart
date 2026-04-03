@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'dart:async';
 
 import '../providers/customer_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../providers/customer_last_transaction_provider.dart';
-import '../providers/db_provider.dart';
 import '../models/customer.dart';
 import 'customer/add_customer_screen.dart';
 import 'customer/customer_details_screen.dart';
@@ -16,8 +16,6 @@ import '../providers/auto_sync_provider.dart';
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _relativeDate = DateFormat('d MMM');
 
-enum FilterMode { all, toReceive, toPay }
-
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -27,9 +25,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with SingleTickerProviderStateMixin {
-  String _searchQuery = '';
-  FilterMode _filterMode = FilterMode.all;
   final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
   late final AnimationController _fabAnimController;
   late final Animation<double> _fabScaleAnimation;
 
@@ -56,9 +53,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     _fabAnimController.dispose();
     super.dispose();
+  }
+
+  void _onSearch(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      ref.read(searchQueryProvider.notifier).updateQuery(value);
+    });
+  }
+
+  void _tryDeleteCustomer(
+      BuildContext context, WidgetRef ref, String customerId, String name) {
+    final balanceMap = ref.read(customerBalanceMapProvider);
+    final balancePaise = balanceMap[customerId] ?? 0;
+
+    if (balancePaise != 0) {
+      // Unsettled account — show blocking sheet
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _UnsettledDeleteSheet(
+          name: name,
+          balancePaise: balancePaise,
+          onViewAccount: () {
+            Navigator.pop(context);
+          },
+        ),
+      );
+    } else {
+      // Settled — show normal confirm dialog
+      _showDeleteConfirmation(context, ref, customerId, name);
+    }
   }
 
   void _showDeleteConfirmation(
@@ -100,38 +129,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget build(BuildContext context) {
     // Keep auto-sync alive
     ref.watch(autoSyncProvider);
-    
-    final balances = ref.watch(dashboardBalancesProvider);
-    final allCustomers = ref.watch(customersProvider);
-    final db = ref.watch(dbServiceProvider);
 
-    final List<Customer> filteredCustomers = allCustomers.where((c) {
-      if (_searchQuery.isNotEmpty) {
-        final q = _searchQuery.toLowerCase();
-        if (!c.name.toLowerCase().contains(q) &&
-            !(c.phone?.toLowerCase().contains(q) ?? false)) {
-          return false;
-        }
-      }
-      if (_filterMode != FilterMode.all) {
-        final txns = db.getTransactionsForCustomer(c.id);
-        double balance = 0;
-        for (final t in txns) {
-          if (t.isGot) {
-            balance -= (t.amountInPaise / 100.0);
-          } else {
-            balance += (t.amountInPaise / 100.0);
-          }
-        }
-        if (_filterMode == FilterMode.toReceive && balance <= 0) {
-          return false;
-        }
-        if (_filterMode == FilterMode.toPay && balance >= 0) {
-          return false;
-        }
-      }
-      return true;
-    }).toList();
+    final balances = ref.watch(dashboardBalancesProvider);
+    final filteredCustomers = ref.watch(filteredCustomersProvider);
+    final allCustomers = ref.watch(customersProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -167,9 +168,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           // Search + filter bar
           _SearchAndFilterBar(
             controller: _searchController,
-            currentFilter: _filterMode,
-            onSearch: (val) => setState(() => _searchQuery = val),
-            onFilter: (mode) => setState(() => _filterMode = mode),
+            currentFilter: ref.watch(filterModeProvider),
+            onSearch: _onSearch,
+            onFilter: (mode) =>
+                ref.read(filterModeProvider.notifier).setFilter(mode),
           ),
 
           // Legend header
@@ -219,7 +221,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                                   CustomerDetailsScreen(customer: customer),
                             ),
                           ),
-                          onLongPress: () => _showDeleteConfirmation(
+                          onLongPress: () => _tryDeleteCustomer(
                             context,
                             ref,
                             customer.id,
@@ -781,6 +783,122 @@ class _EmptyState extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settlement Guard Bottom Sheet
+// ---------------------------------------------------------------------------
+
+class _UnsettledDeleteSheet extends StatelessWidget {
+  final String name;
+  final int balancePaise;
+  final VoidCallback onViewAccount;
+
+  const _UnsettledDeleteSheet({
+    required this.name,
+    required this.balancePaise,
+    required this.onViewAccount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isOwed = balancePaise > 0; // customer owes you
+    final absAmount = _currency.format(balancePaise.abs() / 100.0);
+    final color = isOwed ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
+    final label = isOwed
+        ? '$name owes you $absAmount'
+        : 'You owe $name $absAmount';
+
+    return Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Red lock icon
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.lock_outline_rounded,
+                color: Colors.red.shade400, size: 30),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Cannot Delete Customer',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 18,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Please settle the account before deleting.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+          // Balance chip
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: color.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isOwed
+                      ? Icons.arrow_downward_rounded
+                      : Icons.arrow_upward_rounded,
+                  color: color,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: onViewAccount,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF005CEE),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Got it',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

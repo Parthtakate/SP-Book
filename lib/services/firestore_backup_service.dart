@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
@@ -184,6 +185,89 @@ class FirestoreBackupService {
     }
   }
 
+  /// Incrementally backs up changes using the local sync_queue to minimize Firestore writes.
+  Future<void> backupIncremental(DbService db) async {
+    await _assertConnected();
+    final uid = await _getUidWithSessionCheck();
+
+    final queue = db.syncQueue;
+    if (queue.isEmpty) return;
+
+    final keys = queue.keys.toList();
+    final List<_WriteOp> ops = [];
+    final List<dynamic> skippedKeys = [];
+
+    for (final key in keys) {
+      final entry = queue.get(key);
+      if (entry is! Map) {
+         skippedKeys.add(key);
+         continue;
+      }
+      final String type = entry['type'];
+      final String id = entry['id'];
+      final String action = entry['action'];
+
+      DocumentReference ref;
+      if (type == 'customer') {
+        ref = _firestore.collection('users').doc(uid).collection('customers').doc(id);
+      } else {
+        ref = _firestore.collection('users').doc(uid).collection('transactions').doc(id);
+      }
+
+      if (action == 'delete') {
+        ops.add(_WriteOp(ref: ref, data: null, isDelete: true, queueKey: key));
+      } else {
+        // action == 'set'
+        if (type == 'customer') {
+          final customer = db.customersBox.get(id);
+          if (customer != null) {
+            ops.add(_WriteOp(ref: ref, data: customer.toFirestore(), isDelete: false, queueKey: key));
+          } else {
+            // Missing local item, remove from queue to prevent being stuck
+            skippedKeys.add(key);
+          }
+        } else {
+          final txn = db.transactionsBox.get(id);
+          if (txn != null) {
+            ops.add(_WriteOp(ref: ref, data: txn.toFirestore(), isDelete: false, queueKey: key));
+          } else {
+             skippedKeys.add(key);
+          }
+        }
+      }
+    }
+
+    if (ops.isEmpty) {
+      if (skippedKeys.isNotEmpty) await queue.deleteAll(skippedKeys);
+      return;
+    }
+
+    await _commitIncrementalChunks(ops, queue, skippedKeys);
+
+    // Update metadata
+    try {
+      await _withAuthRetry(() async {
+        await _firestore
+            .collection('users')
+            .doc(uid)
+            .collection('meta')
+            .doc('backup_info')
+            .set({
+              'lastBackupAt': FieldValue.serverTimestamp(),
+              'device': Platform.operatingSystem,
+              'totalCustomers': db.customersBox.length,
+              'totalTransactions': db.transactionsBox.length,
+            })
+            .timeout(
+               const Duration(seconds: 30),
+               onTimeout: () => throw FirestoreTimeoutException(),
+            );
+      });
+    } on TimeoutException {
+      throw FirestoreTimeoutException();
+    }
+  }
+
   // -------------------------------------------------------------------------
   // RESTORE
   // -------------------------------------------------------------------------
@@ -296,9 +380,40 @@ class FirestoreBackupService {
       final chunk = ops.sublist(i, (i + _batchLimit).clamp(0, ops.length));
       final batch = _firestore.batch();
       for (final op in chunk) {
-        batch.set(op.ref, op.data);
+        if (op.isDelete) {
+          batch.delete(op.ref);
+        } else {
+          batch.set(op.ref, op.data!);
+        }
       }
       await _safeCommit(batch);
+    }
+  }
+
+  Future<void> _commitIncrementalChunks(List<_WriteOp> ops, Box queue, List<dynamic> skippedKeys) async {
+    // Delete skipped items right away (they are missing local items)
+    if (skippedKeys.isNotEmpty) {
+      await queue.deleteAll(skippedKeys);
+    }
+
+    for (int i = 0; i < ops.length; i += _batchLimit) {
+      final chunk = ops.sublist(i, (i + _batchLimit).clamp(0, ops.length));
+      final batch = _firestore.batch();
+      final List<dynamic> successfulQueueKeys = [];
+      
+      for (final op in chunk) {
+        if (op.isDelete) {
+          batch.delete(op.ref);
+        } else {
+          batch.set(op.ref, op.data!);
+        }
+        if (op.queueKey != null) {
+          successfulQueueKeys.add(op.queueKey);
+        }
+      }
+      await _safeCommit(batch);
+      // Success! Remove from the queue so they aren't uploaded again.
+      await queue.deleteAll(successfulQueueKeys);
     }
   }
 
@@ -345,6 +460,8 @@ class FirestoreBackupService {
 
 class _WriteOp {
   final DocumentReference ref;
-  final Map<String, dynamic> data;
-  const _WriteOp({required this.ref, required this.data});
+  final Map<String, dynamic>? data;
+  final bool isDelete;
+  final dynamic queueKey;
+  const _WriteOp({required this.ref, this.data, this.isDelete = false, this.queueKey});
 }

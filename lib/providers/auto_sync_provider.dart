@@ -175,7 +175,7 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
           );
         } else if (lastLocalTime > lastCloudTime + 10000) {
           if (kDebugMode) debugPrint('[AutoSync] Local newer by ${(lastLocalTime - lastCloudTime) / 1000}s — backing up...');
-          await backupService.backupAll(db);
+          await backupService.backupIncremental(db);
           state = state.copyWith(
             status: SyncStatus.synced,
             lastSyncedAt: DateTime.now(),
@@ -229,7 +229,7 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
 
     try {
       if (kDebugMode) debugPrint("[AutoSync] Triggering background backup...");
-      await backupService.backupAll(db);
+      await backupService.backupIncremental(db);
       state = state.copyWith(
         status: SyncStatus.synced,
         lastSyncedAt: DateTime.now(),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/transaction.dart';
@@ -5,7 +7,10 @@ import 'db_provider.dart';
 import 'reports_provider.dart';
 import 'customer_last_transaction_provider.dart';
 
+// ---------------------------------------------------------------------------
 // Transaction Service
+// ---------------------------------------------------------------------------
+
 class TransactionService {
   final Ref ref;
 
@@ -28,19 +33,16 @@ class TransactionService {
       imagePath: imagePath,
     );
     await ref.read(dbServiceProvider).saveTransaction(transaction);
-
     _refresh(customerId);
   }
 
   Future<void> deleteTransaction(String transactionId, String customerId) async {
     await ref.read(dbServiceProvider).deleteTransaction(transactionId);
-
     _refresh(customerId);
   }
 
   Future<void> updateTransaction(TransactionModel updatedTransaction) async {
     await ref.read(dbServiceProvider).saveTransaction(updatedTransaction);
-
     _refresh(updatedTransaction.customerId);
   }
 
@@ -50,6 +52,7 @@ class TransactionService {
     ref.invalidate(customerLastTransactionProvider(customerId));
     ref.invalidate(dashboardBalancesProvider);
     ref.invalidate(accountStatementProvider);
+    ref.invalidate(customerBalanceMapProvider);
   }
 }
 
@@ -57,12 +60,22 @@ final transactionServiceProvider = Provider<TransactionService>((ref) {
   return TransactionService(ref);
 });
 
-final customerTransactionsProvider = Provider.family<List<TransactionModel>, String>((ref, customerId) {
+// ---------------------------------------------------------------------------
+// Per-customer transactions
+// ---------------------------------------------------------------------------
+
+final customerTransactionsProvider =
+    Provider.family<List<TransactionModel>, String>((ref, customerId) {
   final db = ref.watch(dbServiceProvider);
   return db.getTransactionsForCustomer(customerId);
 });
 
-final customerBalanceProvider = Provider.family<double, String>((ref, customerId) {
+// ---------------------------------------------------------------------------
+// Per-customer balance (double, for display)
+// ---------------------------------------------------------------------------
+
+final customerBalanceProvider =
+    Provider.family<double, String>((ref, customerId) {
   final transactions = ref.watch(customerTransactionsProvider(customerId));
   double balance = 0;
   for (var t in transactions) {
@@ -75,29 +88,44 @@ final customerBalanceProvider = Provider.family<double, String>((ref, customerId
   return balance;
 });
 
-final dashboardBalancesProvider = Provider<Map<String, double>>((ref) {
+// ---------------------------------------------------------------------------
+// Global balance map in PAISE (int) — used for filtering & settlement guard
+// ---------------------------------------------------------------------------
+
+/// Returns `Map<customerId, netBalanceInPaise>`.
+/// Positive = customer owes you. Negative = you owe them.
+/// Kept as [int] to avoid floating-point rounding on financial data.
+/// Invalidated explicitly in TransactionService._refresh().
+final customerBalanceMapProvider = Provider<Map<String, int>>((ref) {
   final db = ref.watch(dbServiceProvider);
-  
-  double totalToReceive = 0;
-  double totalToPay = 0;
-
-  final Map<String, double> balanceByCustomer = {};
+  final Map<String, int> map = {};
   for (final t in db.transactionsBox.values) {
-    final delta = t.isGot ? -(t.amountInPaise / 100.0) : (t.amountInPaise / 100.0);
-    balanceByCustomer[t.customerId] =
-        (balanceByCustomer[t.customerId] ?? 0) + delta;
+    final delta = t.isGot ? -t.amountInPaise : t.amountInPaise;
+    map[t.customerId] = (map[t.customerId] ?? 0) + delta;
   }
+  return map;
+});
 
-  for (final customerBalance in balanceByCustomer.values) {
-    if (customerBalance > 0) {
-      totalToReceive += customerBalance;
-    } else if (customerBalance < 0) {
-      totalToPay += customerBalance.abs();
+// ---------------------------------------------------------------------------
+// Dashboard totals
+// ---------------------------------------------------------------------------
+
+final dashboardBalancesProvider = Provider<Map<String, double>>((ref) {
+  final balanceMap = ref.watch(customerBalanceMapProvider);
+
+  int totalToReceivePaise = 0;
+  int totalToPayPaise = 0;
+
+  for (final balancePaise in balanceMap.values) {
+    if (balancePaise > 0) {
+      totalToReceivePaise += balancePaise;
+    } else if (balancePaise < 0) {
+      totalToPayPaise += balancePaise.abs();
     }
   }
-  
+
   return {
-    'toReceive': totalToReceive,
-    'toPay': totalToPay,
+    'toReceive': totalToReceivePaise / 100.0,
+    'toPay': totalToPayPaise / 100.0,
   };
 });
