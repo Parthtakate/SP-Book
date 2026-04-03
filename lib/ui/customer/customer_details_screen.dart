@@ -10,6 +10,7 @@ import '../reminder/set_reminder_screen.dart';
 import '../reports/reports_screen.dart';
 import '../transaction/add_transaction_screen.dart';
 import '../../services/pdf_service.dart';
+import '../../services/safe_text.dart';
 
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _timeFormat = DateFormat('hh:mm a');
@@ -388,7 +389,7 @@ class _GradientHeader extends StatelessWidget {
                   ),
                   Expanded(
                     child: Text(
-                      customer.name,
+                      safeText(customer.name, fallback: 'Unknown'),
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
@@ -731,7 +732,7 @@ class _TransactionCard extends StatelessWidget {
                   children: [
                     if (t.note.isNotEmpty)
                       Text(
-                        t.note,
+                        safeText(t.note),
                         style: const TextStyle(
                           fontSize: 13,
                           color: Colors.black87,

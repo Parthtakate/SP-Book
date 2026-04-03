@@ -12,6 +12,7 @@ import 'customer/customer_details_screen.dart';
 import 'reports/reports_screen.dart';
 import 'settings_screen.dart';
 import '../providers/auto_sync_provider.dart';
+import '../services/safe_text.dart';
 
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _relativeDate = DateFormat('d MMM');
@@ -661,7 +662,7 @@ class _CustomerListCard extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        customer.name,
+                        safeText(customer.name, fallback: '?'),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
@@ -674,7 +675,7 @@ class _CustomerListCard extends ConsumerWidget {
                       Text(
                         lastTxnDate != null
                             ? 'Last: ${_relativeDate.format(lastTxnDate)}'
-                            : customer.phone ?? 'No transactions yet',
+                            : safeText(customer.phone, fallback: 'No transactions yet'),
                         style: TextStyle(
                           color: Colors.grey.shade500,
                           fontSize: 12,
