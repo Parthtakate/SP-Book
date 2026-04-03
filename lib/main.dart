@@ -16,14 +16,21 @@ void main() async {
   // Initialize Firebase
   await Firebase.initializeApp();
 
-  // Initialize Crashlytics
-  FlutterError.onError = (errorDetails) {
-    FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
-  };
-  PlatformDispatcher.instance.onError = (error, stack) {
-    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-    return true;
-  };
+  // Initialize Crashlytics only in release mode so it never blocks dev workflows.
+  // Wrapped in try-catch so a missing Crashlytics setup never prevents the app from launching.
+  if (!kDebugMode) {
+    try {
+      FlutterError.onError = (errorDetails) {
+        FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+      };
+      PlatformDispatcher.instance.onError = (error, stack) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+        return true;
+      };
+    } catch (_) {
+      // Crashlytics unavailable — proceed without crash reporting.
+    }
+  }
 
   // Best-effort restore of cached session (silent Google sign-in).
   // This prevents "login not staying" issues after app relaunch.
