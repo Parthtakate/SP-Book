@@ -233,13 +233,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                             error: (error, stackTrace) =>
                                 const Text('Error loading account.'),
                             data: (User? user) {
-                              final db = ref.read(dbServiceProvider);
-                              if (user == null && !db.isLoggedIn) {
+                              if (user == null) {
                                 return _ActionCard(
                                   icon: Icons.g_mobiledata_rounded,
                                   iconColor: const Color(0xFF3B82F6),
                                   title: 'Sign in with Google',
-                                  subtitle: 'Enable seamless cloud backup',
+                                  subtitle: 'Enable cloud backup & sync',
                                   onTap: _signIn,
                                 );
                               }
@@ -375,42 +374,7 @@ class _ProfileHeader extends ConsumerWidget {
         loading: () => const SizedBox.shrink(),
         error: (error, stackTrace) => const SizedBox.shrink(),
         data: (User? user) {
-          final db = ref.read(dbServiceProvider);
           if (user == null) {
-            if (db.isLoggedIn) {
-               return Column(
-                 mainAxisAlignment: MainAxisAlignment.center,
-                 children: [
-                   Container(
-                     width: 72,
-                     height: 72,
-                     decoration: BoxDecoration(
-                       color: Colors.white.withValues(alpha: 0.15),
-                       shape: BoxShape.circle,
-                     ),
-                     child: const Icon(
-                       Icons.account_circle,
-                       color: Colors.white,
-                       size: 36,
-                     ),
-                   ),
-                   const SizedBox(height: 12),
-                   const Text(
-                     'Your Account (Offline)',
-                     style: TextStyle(
-                       color: Colors.white,
-                       fontSize: 20,
-                       fontWeight: FontWeight.bold,
-                     ),
-                   ),
-                   const SizedBox(height: 4),
-                   const Text(
-                     'Waiting for internet to sync',
-                     style: TextStyle(color: Colors.orange, fontSize: 13),
-                   ),
-                 ],
-               );
-            }
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -429,7 +393,7 @@ class _ProfileHeader extends ConsumerWidget {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Guest User',
+                  'Guest Mode',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -438,7 +402,7 @@ class _ProfileHeader extends ConsumerWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Sign in to enable cloud backup',
+                  'Tap "Sign in with Google" below to sync',
                   style: TextStyle(color: Colors.white60, fontSize: 13),
                 ),
               ],
