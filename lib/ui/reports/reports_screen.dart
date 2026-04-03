@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../providers/db_provider.dart';
 import '../../services/pdf_service.dart';
+import '../../services/csv_service.dart';
 import '../../providers/reports_provider.dart';
 
 final _inrFormat = NumberFormat('#,##,##0.00', 'en_IN');
@@ -133,9 +134,40 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         behavior: SnackBarBehavior.floating,
       ));
     } catch (e) {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Error generating PDF. Please try again.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  Future<void> _exportCsv() async {
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Generating CSV...'),
+        behavior: SnackBarBehavior.floating,
+      ));
+
+      final statement = ref.read(accountStatementProvider);
+      final dateRange = ref.read(reportDateRangeProvider);
+
+      final filePath = await CsvService.generateAccountStatementCsv(
+        userName: _getUserName(),
+        statement: statement,
+        dateRange: dateRange,
+      );
+
+      if (filePath == null || !mounted) return;
+
+      // ignore: deprecated_member_use
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: 'SPBOOKS Account Statement (CSV)',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Error generating CSV. Please try again.'),
         behavior: SnackBarBehavior.floating,
       ));
     }
@@ -619,9 +651,9 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: _exportPdf,
-                      icon: const Icon(Icons.picture_as_pdf, size: 18),
+                      icon: const Icon(Icons.picture_as_pdf, size: 16),
                       label: const Text(
-                        'PDF DOWNLOAD',
+                        'PDF',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                       style: ElevatedButton.styleFrom(
@@ -635,11 +667,31 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _exportCsv,
+                      icon: const Icon(Icons.table_chart, size: 16),
+                      label: const Text(
+                        'CSV',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF005CEE),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: _sharePdf,
-                      icon: const Icon(Icons.share, size: 18),
+                      icon: const Icon(Icons.share, size: 16),
                       label: const Text(
                         'SHARE',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
