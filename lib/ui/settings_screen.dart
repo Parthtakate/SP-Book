@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../providers/auth_provider.dart';
 import '../providers/auto_sync_provider.dart';
@@ -264,7 +266,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                     const SizedBox(height: 32),
 
                     // ---- About Section
-                    _SectionLabel('About Khata App'),
+                    _SectionLabel('About SPBOOKS'),
                     const SizedBox(height: 12),
                     Container(
                       decoration: BoxDecoration(
@@ -285,18 +287,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                             iconColor: const Color(0xFFF59E0B),
                             title: 'Rate Us',
                             subtitle: 'Love the app? Leave a review',
-                            onTap: () {
-                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Thanks for your support!')));
+                            onTap: () async {
+                              // Opens the Play Store listing so users can rate the app.
+                              final uri = Uri.parse(
+                                'https://play.google.com/store/apps/details?id=com.khatabook.khata_app',
+                              );
+                              if (await canLaunchUrl(uri)) {
+                                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              } else if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Could not open Play Store.')),
+                                );
+                              }
                             },
                           ),
                           const Divider(height: 1, indent: 64),
                           _ActionCard(
                             icon: Icons.share_rounded,
                             iconColor: const Color(0xFF10B981),
-                            title: 'Share Khata App',
+                            title: 'Share SPBOOKS',
                             subtitle: 'Recommend us to your merchant friends',
                             onTap: () {
-                               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Share feature coming soon!')));
+                              // Opens the native share sheet so users can recommend the app.
+                              SharePlus.instance.share(
+                                ShareParams(
+                                  text: 'Manage your ledger with SPBOOKS!\n'
+                                      'Track credit, payments & customers — all in one place.\n'
+                                      'Download here: https://play.google.com/store/apps/details?id=com.khatabook.khata_app',
+                                  subject: 'Try SPBOOKS — Smart Digital Ledger',
+                                ),
+                              );
                             },
                           ),
                         ],

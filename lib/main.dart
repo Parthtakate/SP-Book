@@ -44,6 +44,15 @@ void main() async {
   final dbService = DbService();
   await dbService.init();
 
+  // SAFETY: We intentionally do NOT clear local data here based on
+  // FirebaseAuth.currentUser being null. currentUser can be null during:
+  //   - offline startup (no network)
+  //   - cold start delay (Firebase SDK hasn't restored session yet)
+  //   - auth token refresh lag
+  // Clearing data in any of those cases would silently destroy all
+  // customer records and transactions. Local data is ONLY cleared on
+  // explicit user logout (see settings_screen.dart → _signOut).
+
   runApp(
     ProviderScope(
       overrides: [
