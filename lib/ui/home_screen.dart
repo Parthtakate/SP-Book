@@ -99,7 +99,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Delete Customer?', style: TextStyle(fontWeight: FontWeight.bold)),
         content: Text(
-          'Delete "$name" and all their transactions? This cannot be undone.',
+          'Delete "${safeText(name, fallback: 'this customer')}" and all their transactions? This cannot be undone.',
           style: const TextStyle(color: Colors.black54),
         ),
         actions: [
@@ -604,9 +604,11 @@ class _CustomerListCard extends ConsumerWidget {
       balanceLabel = 'Settled up';
     }
 
-    final initial = customer.name.isNotEmpty
-        ? customer.name[0].toUpperCase()
-        : '?';
+    // Use safeText first to strip any malformed UTF-16 before we
+    // slice characters. Directly indexing customer.name[0] can crash
+    // if the first codeunit is a lone surrogate (e.g. some emoji).
+    final safeName = safeText(customer.name, fallback: '?');
+    final initial = safeName.isNotEmpty ? safeName[0].toUpperCase() : '?';
 
     return Material(
       borderRadius: BorderRadius.circular(12),
@@ -809,9 +811,10 @@ class _UnsettledDeleteSheet extends StatelessWidget {
     final isOwed = balancePaise > 0; // customer owes you
     final absAmount = _currency.format(balancePaise.abs() / 100.0);
     final color = isOwed ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
+    final safeName = safeText(name, fallback: 'this customer');
     final label = isOwed
-        ? '$name owes you $absAmount'
-        : 'You owe $name $absAmount';
+        ? '$safeName owes you $absAmount'
+        : 'You owe $safeName $absAmount';
 
     return Container(
       margin: const EdgeInsets.all(12),
