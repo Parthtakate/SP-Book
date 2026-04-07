@@ -110,19 +110,43 @@ class DbService {
     }
   }
 
+  Future<void> saveAllCustomers(List<Customer> customers) async {
+    final map = {for (var c in customers) c.id: c};
+    await _customers!.putAll(map);
+    // Note: saveAll is primarily used during restore, where sync queue is ignored.
+  }
+
   Future<void> deleteCustomer(String id) async {
-    await _customers!.delete(id);
+    // Step 1: Collect all transaction IDs for this customer FIRST (before any deletions)
+    final txnIds = _transactions!.values
+        .where((t) => t.customerId == id)
+        .map((t) => t.id)
+        .toList();
+
+    // Step 2: Write ALL sync queue entries atomically BEFORE any Hive deletions.
+    // If the app crashes AFTER this point, the queue will push correct deletes
+    // to Firestore on next launch, preventing orphaned remote documents.
     if (!isRestoring) {
-      await _syncQueue!.put('customer_$id', {'type': 'customer', 'id': id, 'action': 'delete'});
+      final queueEntries = <String, dynamic>{
+        'customer_$id': {'type': 'customer', 'id': id, 'action': 'delete'},
+        for (final txnId in txnIds)
+          'transaction_$txnId': {'type': 'transaction', 'id': txnId, 'action': 'delete'},
+      };
+      await _syncQueue!.putAll(queueEntries);
     }
-    // Also delete associated transactions
-    final transactionsToDelete = _transactions!.values.where((t) => t.customerId == id).toList();
-    for (var t in transactionsToDelete) {
-      await _transactions!.delete(t.id);
-      if (!isRestoring) {
-        await _syncQueue!.put('transaction_${t.id}', {'type': 'transaction', 'id': t.id, 'action': 'delete'});
+
+    // Step 3: Delete associated transactions (with image cleanup)
+    for (final txnId in txnIds) {
+      final txn = _transactions!.get(txnId);
+      if (txn?.imagePath != null) {
+        final file = File(txn!.imagePath!);
+        if (await file.exists()) await file.delete();
       }
+      await _transactions!.delete(txnId);
     }
+
+    // Step 4: Delete the customer record
+    await _customers!.delete(id);
   }
 
   // --- Transactions ---
@@ -140,6 +164,12 @@ class DbService {
     if (!isRestoring) {
       await _syncQueue!.put('transaction_${transaction.id}', {'type': 'transaction', 'id': transaction.id, 'action': 'set'});
     }
+  }
+
+  Future<void> saveAllTransactions(List<TransactionModel> transactions) async {
+    final map = {for (var t in transactions) t.id: t};
+    await _transactions!.putAll(map);
+    // Note: saveAll is primarily used during restore, where sync queue is ignored.
   }
 
   Future<void> deleteTransaction(String transactionId) async {

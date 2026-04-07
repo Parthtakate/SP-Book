@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../services/db_service.dart';
@@ -42,31 +43,62 @@ class FirestoreBackupService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  String get _ts => DateTime.now().toIso8601String();
+
   Future<String> _getUidWithSessionCheck() async {
-    // Auth state can briefly lag on cold starts; wait a moment before failing.
+    debugPrint('[AUTH][$_ts] _getUidWithSessionCheck() called');
     User? user = FirebaseAuth.instance.currentUser;
+    debugPrint('[AUTH][$_ts] Initial currentUser: uid=${user?.uid}');
+
+    // ── FIX: Wait for Firebase Auth to actually restore its session ──
+    // On cold starts, FirebaseAuth.instance.currentUser can be null for
+    // up to ~1-2 seconds while the SDK restores the persisted session.
+    // Instead of an arbitrary delay, we listen to authStateChanges() which
+    // fires as soon as the session is restored.
     if (user == null) {
-      await Future.delayed(const Duration(milliseconds: 400));
-      user = FirebaseAuth.instance.currentUser;
+      debugPrint('[AUTH][$_ts] currentUser is null — waiting for authStateChanges (up to 5s)...');
+      try {
+        user = await FirebaseAuth.instance
+            .authStateChanges()
+            .firstWhere((u) => u != null)
+            .timeout(const Duration(seconds: 5));
+        debugPrint('[AUTH][$_ts] authStateChanges emitted user: uid=${user?.uid}');
+      } on TimeoutException {
+        debugPrint('[AUTH][$_ts] authStateChanges timed out after 5s — user still null');
+        // Fall through to silent restore below
+      }
     }
     
-    // If still null, try to forcefully restore Google session (handles offline-to-online transitions)
+    // Last resort: try to forcefully restore Google session
+    // (handles offline-to-online transitions where authStateChanges won't fire)
     if (user == null) {
+      debugPrint('[AUTH][$_ts] Still null — attempting tryRestoreSessionSilently()...');
       try {
         await AuthService().tryRestoreSessionSilently();
         user = FirebaseAuth.instance.currentUser;
-      } catch (_) {}
+        debugPrint('[AUTH][$_ts] After silent restore: uid=${user?.uid}');
+      } catch (e) {
+        debugPrint('[AUTH][$_ts] tryRestoreSessionSilently() failed: $e');
+      }
     }
 
-    if (user == null) throw NotSignedInException();
+    if (user == null) {
+      debugPrint('[ERROR][$_ts] _getUidWithSessionCheck: user is STILL null — throwing NotSignedInException');
+      throw NotSignedInException();
+    }
 
     try {
+      debugPrint('[AUTH][$_ts] Validating ID token for uid=${user.uid}...');
       await user.getIdToken();
-    } on FirebaseAuthException {
+      debugPrint('[AUTH][$_ts] ID token valid');
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[AUTH][$_ts] ID token invalid ($e) — refreshing...');
       await _refreshAuthToken();
       user = FirebaseAuth.instance.currentUser;
       if (user == null) throw NotSignedInException();
+      debugPrint('[AUTH][$_ts] Token refreshed, uid=${user.uid}');
     }
+    debugPrint('[AUTH][$_ts] _getUidWithSessionCheck() returning uid=${user.uid}');
     return user.uid;
   }
 
@@ -276,13 +308,15 @@ class FirestoreBackupService {
   /// - If Hive is empty → full restore (no conflict check needed).
   /// - Otherwise → last-write-wins: only overwrites local if Firestore is newer.
   Future<void> restoreAll(DbService db) async {
+    debugPrint('[SYNC][$_ts] restoreAll() STARTED');
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
 
     db.isRestoring = true; // Signal watchers to ignore these ops
     try {
-      // Fetch from Firestore with timeout
-      final customerDocs = await _withAuthRetry(() async {
+      // Fetch from Firestore concurrently to halve network wait time
+      debugPrint('[SYNC][$_ts] restoreAll() fetching customers & transactions from Firestore...');
+      final futureCustomers = _withAuthRetry(() async {
         return _firestore
             .collection('users')
             .doc(uid)
@@ -294,7 +328,7 @@ class FirestoreBackupService {
             );
       });
 
-      final transactionDocs = await _withAuthRetry(() async {
+      final futureTransactions = _withAuthRetry(() async {
         return _firestore
             .collection('users')
             .doc(uid)
@@ -306,6 +340,10 @@ class FirestoreBackupService {
             );
       });
 
+      final results = await Future.wait([futureCustomers, futureTransactions]);
+      final customerDocs = results[0];
+      final transactionDocs = results[1];
+
       final remoteCustomers = customerDocs.docs
           .map((d) => Customer.fromFirestore(d.data()))
           .toList();
@@ -313,31 +351,37 @@ class FirestoreBackupService {
           .map((d) => TransactionModel.fromFirestore(d.data()))
           .toList();
 
+      debugPrint('[SYNC][$_ts] restoreAll() fetched ${remoteCustomers.length} customers, ${remoteTransactions.length} transactions');
+
       // SAFETY GUARD: Only clear local data if the remote backup actually has
       // content. If Firestore returns empty (e.g., first-time user or network
       // returned partial data), we preserve local data unconditionally.
       if (remoteCustomers.isEmpty && remoteTransactions.isEmpty) {
+        debugPrint('[SYNC][$_ts] restoreAll() — remote is empty, keeping local data intact');
         // Nothing to restore — keep local data intact.
         return;
       }
 
       // ---- Clear local Hive AFTER confirming remote data is non-empty
+      debugPrint('[SYNC][$_ts] restoreAll() clearing local Hive and writing remote data...');
       await db.clearAll();
 
-      // ---- Write all remote data to Hive
-      for (final c in remoteCustomers) {
-        await db.saveCustomer(c);
-      }
-
-      for (final t in remoteTransactions) {
-        await db.saveTransaction(t);
-      }
+      // ---- Write all remote data to Hive using fast bulk operations
+      if (remoteCustomers.isNotEmpty) await db.saveAllCustomers(remoteCustomers);
+      if (remoteTransactions.isNotEmpty) await db.saveAllTransactions(remoteTransactions);
 
       // Update local modification time to match the backup completion roughly
       await db.setLastLocalModifiedAt(DateTime.now().millisecondsSinceEpoch);
+      debugPrint('[SYNC][$_ts] restoreAll() COMPLETED successfully');
 
-    } on FirebaseException catch (e) {
+    } on FirebaseException catch (e, stackTrace) {
+      debugPrint('[ERROR][$_ts] restoreAll() FirebaseException: $e');
+      debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       if (_isAuthOrPermissionError(e)) throw FirestorePermissionException();
+      rethrow;
+    } catch (e, stackTrace) {
+      debugPrint('[ERROR][$_ts] restoreAll() unexpected error: $e');
+      debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       rethrow;
     } finally {
       db.isRestoring = false;
@@ -350,6 +394,7 @@ class FirestoreBackupService {
 
   /// Fetches the backup metadata document (may return null if never backed up).
   Future<Map<String, dynamic>?> getBackupInfo() async {
+    debugPrint('[SYNC][$_ts] getBackupInfo() STARTED');
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
     try {
@@ -365,8 +410,11 @@ class FirestoreBackupService {
               onTimeout: () => throw FirestoreTimeoutException(),
             );
       });
-      return doc.exists ? doc.data() : null;
+      final result = doc.exists ? doc.data() : null;
+      debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — exists=${doc.exists}, data=$result');
+      return result;
     } on TimeoutException {
+      debugPrint('[ERROR][$_ts] getBackupInfo() TIMED OUT');
       throw FirestoreTimeoutException();
     }
   }

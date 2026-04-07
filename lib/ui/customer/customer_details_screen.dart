@@ -91,13 +91,13 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
     }
   }
 
-  Future<void> _sendWhatsApp(BuildContext context, double balance) async {
+  Future<void> _sendWhatsApp(BuildContext context, int balancePaise) async {
     if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
       _showSnack(context, 'No phone number saved for this customer.');
       return;
     }
     final msg =
-        'Hi ${widget.customer.name}, your pending balance is ${_currency.format(balance.abs())}. Please clear it soon.';
+        'Hi ${widget.customer.name}, your pending balance is ${_currency.format(balancePaise.abs() / 100.0)}. Please clear it soon.';
     final url = Uri.parse(
         'whatsapp://send?phone=${widget.customer.phone}&text=${Uri.encodeComponent(msg)}');
 
@@ -129,7 +129,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
   // ---- Build -----------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final balance = ref.watch(customerBalanceProvider(widget.customer.id));
+    final int balance = ref.watch(customerBalanceProvider(widget.customer.id));
     final transactions = ref.watch(customerTransactionsProvider(widget.customer.id));
     
     var filteredTransactions = transactions;
@@ -224,7 +224,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                 await PdfService.generateAndShareCustomerStatement(
                   customer: widget.customer,
                   transactions: transactions,
-                  balance: balance,
+                  balance: balance / 100.0,
                   dateRange: _filterRange,
                 );
               } catch (e) {
@@ -240,7 +240,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                 context: context,
                 builder: (ctx) => AlertDialog(
                   title: const Text('Settle Balance?'),
-                  content: Text('This will add a ${balance > 0 ? "You Got" : "You Gave"} transaction of ${_currency.format(balance.abs())} to bring the balance to ₹0.'),
+                  content: Text('This will add a ${balance > 0 ? "You Got" : "You Gave"} transaction of ${_currency.format(balance.abs() / 100.0)} to bring the balance to ₹0.'),
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
                     ElevatedButton(
@@ -257,7 +257,8 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
               if (confirm == true) {
                 ref.read(transactionServiceProvider).addTransaction(
                   customerId: widget.customer.id,
-                  amountInPaise: (balance.abs() * 100).round(),
+                  // balance is already in paise — use directly, no need to multiply
+                  amountInPaise: balance.abs(),
                   isGot: balance > 0,
                   note: 'Balance Settled',
                 );
@@ -330,7 +331,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
 
 class _GradientHeader extends StatelessWidget {
   final Customer customer;
-  final double balance;
+  final int balance;
   final String balanceStatus;
   final Color headerColor;
   final bool isFiltered;
@@ -439,7 +440,7 @@ class _GradientHeader extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _currency.format(balance.abs()),
+                        _currency.format(balance.abs() / 100.0),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 30,
@@ -448,7 +449,7 @@ class _GradientHeader extends StatelessWidget {
                       ),
                     ],
                   ),
-                  if (balance.abs() > 0.001)
+                  if (balance != 0)
                     ElevatedButton.icon(
                       onPressed: onSettle,
                       icon: const Icon(Icons.handshake, size: 16),

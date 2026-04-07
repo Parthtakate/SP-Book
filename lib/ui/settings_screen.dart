@@ -11,6 +11,7 @@ import '../providers/customer_provider.dart';
 import '../providers/db_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../services/pdf_service.dart';
+import 'onboarding_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -92,6 +93,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     // Invalidate UI providers
     ref.invalidate(customersProvider);
     ref.invalidate(dashboardBalancesProvider);
+
+    // Navigate out to OnboardingScreen and clear navigation stack
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+        (route) => false,
+      );
+    }
   }
 
   Future<void> _exportFullPdf(BuildContext context) async {

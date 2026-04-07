@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../providers/customer_provider.dart';
 import '../providers/transaction_provider.dart';
@@ -12,6 +13,7 @@ import 'customer/customer_details_screen.dart';
 import 'reports/reports_screen.dart';
 import 'settings_screen.dart';
 import '../providers/auto_sync_provider.dart';
+import '../providers/db_provider.dart';
 import '../services/safe_text.dart';
 
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
@@ -129,11 +131,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   Widget build(BuildContext context) {
     // Keep auto-sync alive
-    ref.watch(autoSyncProvider);
+    final syncState = ref.watch(autoSyncProvider);
 
     final balances = ref.watch(dashboardBalancesProvider);
     final filteredCustomers = ref.watch(filteredCustomersProvider);
     final allCustomers = ref.watch(customersProvider);
+
+    final db = ref.watch(dbServiceProvider);
+    final isRestoring = ref.watch(isRestoringProvider);
+    final isEmpty = allCustomers.isEmpty && db.transactionsBox.isEmpty;
+    final isGuest = FirebaseAuth.instance.currentUser == null || FirebaseAuth.instance.currentUser!.isAnonymous;
+
+    if (isEmpty && isRestoring && !isGuest) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF5F7FA),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              CircularProgressIndicator(color: Color(0xFF005CEE)),
+              SizedBox(height: 18),
+              Text(
+                "Setting up your account...",
+                style: TextStyle(
+                  color: Colors.black54,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
@@ -156,6 +186,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
       body: Column(
         children: [
+          // Sync status banner
+          _SyncStatusBanner(
+            status: syncState.status,
+            isRestoring: isRestoring,
+            onRetry: () {
+              ref.read(autoSyncProvider.notifier).stop();
+              ref.read(autoSyncProvider.notifier).start();
+            },
+          ),
+
           // Dashboard Card
           _DashboardCard(
             toReceive: balances['toReceive'] ?? 0,
@@ -587,7 +627,7 @@ class _CustomerListCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final balance = ref.watch(customerBalanceProvider(customer.id));
+    final int balance = ref.watch(customerBalanceProvider(customer.id));
     final lastTxnDate = ref.watch(customerLastTransactionProvider(customer.id));
 
     final Color balanceColor;
@@ -694,7 +734,7 @@ class _CustomerListCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      _currency.format(balance.abs()),
+                      _currency.format(balance.abs() / 100.0),
                       style: TextStyle(
                         color: balanceColor,
                         fontWeight: FontWeight.bold,
@@ -904,6 +944,166 @@ class _UnsettledDeleteSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sync Status Banner
+// ---------------------------------------------------------------------------
+
+class _SyncStatusBanner extends StatelessWidget {
+  final SyncStatus status;
+  final bool isRestoring;
+  final VoidCallback onRetry;
+
+  const _SyncStatusBanner({
+    required this.status,
+    required this.isRestoring,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool showBanner = isRestoring ||
+        status == SyncStatus.syncing ||
+        status == SyncStatus.failed ||
+        status == SyncStatus.offline;
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      child: showBanner
+          ? AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: _buildContent(),
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+
+  Widget _buildContent() {
+    if (isRestoring || status == SyncStatus.syncing) {
+      return _bannerContainer(
+        key: const ValueKey('syncing'),
+        color: const Color(0xFFE3F2FD),
+        borderColor: const Color(0xFF90CAF9),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF1565C0),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                isRestoring
+                    ? 'Restoring your data from cloud...'
+                    : 'Syncing your data...',
+                style: const TextStyle(
+                  color: Color(0xFF1565C0),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (status == SyncStatus.failed) {
+      return _bannerContainer(
+        key: const ValueKey('failed'),
+        color: const Color(0xFFFFF3E0),
+        borderColor: const Color(0xFFFFCC80),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: Color(0xFFE65100), size: 18),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Sync failed',
+                style: TextStyle(
+                  color: Color(0xFFE65100),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: onRetry,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE65100),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (status == SyncStatus.offline) {
+      return _bannerContainer(
+        key: const ValueKey('offline'),
+        color: const Color(0xFFFCE4EC),
+        borderColor: const Color(0xFFF48FB1),
+        child: Row(
+          children: const [
+            Icon(Icons.cloud_off_rounded, color: Color(0xFFC62828), size: 18),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'You\'re offline — changes will sync when back online',
+                style: TextStyle(
+                  color: Color(0xFFC62828),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _bannerContainer({
+    required Key key,
+    required Color color,
+    required Color borderColor,
+    required Widget child,
+  }) {
+    return Container(
+      key: key,
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: borderColor, width: 1),
+      ),
+      child: child,
     );
   }
 }

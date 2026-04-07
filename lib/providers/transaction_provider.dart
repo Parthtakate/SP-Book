@@ -71,19 +71,19 @@ final customerTransactionsProvider =
 });
 
 // ---------------------------------------------------------------------------
-// Per-customer balance (double, for display)
+// Per-customer balance in PAISE (int) — avoids floating-point drift on money.
+// Positive = customer owes you. Negative = you owe them.
+// IMPORTANT: Divide by 100.0 only at display layer (format/PDF calls).
 // ---------------------------------------------------------------------------
 
 final customerBalanceProvider =
-    Provider.family<double, String>((ref, customerId) {
+    Provider.family<int, String>((ref, customerId) {
   final transactions = ref.watch(customerTransactionsProvider(customerId));
-  double balance = 0;
-  for (var t in transactions) {
-    if (t.isGot) {
-      balance -= (t.amountInPaise / 100.0);
-    } else {
-      balance += (t.amountInPaise / 100.0);
-    }
+  int balance = 0;
+  for (final t in transactions) {
+    // isGot == true  → customer gave you money → reduces what they owe → negative
+    // isGot == false → you gave customer money → increases what they owe → positive
+    balance += t.isGot ? -t.amountInPaise : t.amountInPaise;
   }
   return balance;
 });

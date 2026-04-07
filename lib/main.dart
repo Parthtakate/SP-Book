@@ -122,15 +122,25 @@ class _KhataAppState extends State<KhataApp> {
   }
 }
 
-/// Shows OnboardingScreen to signed-out users, AppLockScreen to signed-in users.
-/// Checks the persisted `hasCompletedOnboarding` flag so that users who
-/// skipped login or already signed in don't see onboarding on every cold start.
+/// Shows OnboardingScreen to first-time users, AppLockScreen to returning users.
+/// The persisted `hasCompletedOnboarding` flag (stored in Hive) is the source
+/// of truth — NOT the Firebase auth state, because Google Play Services can
+/// silently restore a previous Google sign-in even after reinstalling the app.
 class _AuthGate extends StatelessWidget {
   final DbService dbService;
   const _AuthGate({required this.dbService});
 
   @override
   Widget build(BuildContext context) {
+    // ── First-time user check (takes priority over auth state) ──
+    // On a fresh install, Hive is empty → hasCompletedOnboarding is false.
+    // Even if tryRestoreSessionSilently() restored a Firebase user,
+    // the user should still see onboarding on a new install.
+    if (!dbService.hasCompletedOnboarding) {
+      return const OnboardingScreen();
+    }
+
+    // ── Returning user: wait for Firebase auth to resolve ──
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
@@ -144,20 +154,9 @@ class _AuthGate extends StatelessWidget {
           );
         }
 
-        final user = snapshot.data;
-
-        // User is signed in via Firebase → proceed directly
-        if (user != null) {
-          return const AppLockScreen();
-        }
-
-        // Not signed in, but previously completed onboarding (e.g. skipped) → proceed
-        if (dbService.hasCompletedOnboarding) {
-          return const AppLockScreen();
-        }
-
-        // First time user → show onboarding
-        return const OnboardingScreen();
+        // Onboarding was completed previously → go to main app
+        // (whether signed in or guest mode)
+        return const AppLockScreen();
       },
     );
   }

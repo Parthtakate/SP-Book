@@ -38,7 +38,9 @@ class Customer {
     'id': id,
     'name': name,
     'phone': phone,
-    'createdAt': FieldValue.serverTimestamp(),
+    // Use the actual stored createdAt date — NOT serverTimestamp().
+    // serverTimestamp() would reset it to NOW on every backup, destroying the original creation date.
+    'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': FieldValue.serverTimestamp(),
     'isDeleted': isDeleted,
   };
