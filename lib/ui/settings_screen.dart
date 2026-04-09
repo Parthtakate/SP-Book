@@ -397,11 +397,6 @@ class _ProfileHeader extends ConsumerWidget {
     return Container(
       decoration: const BoxDecoration(
         color: Color(0xFF0F172A), // Removed gradient, went with solid deep dark blue for modern minimalist edge
-        image: DecorationImage(
-          image: NetworkImage('https://www.transparenttextures.com/patterns/cubes.png'),
-          opacity: 0.1,
-          repeat: ImageRepeat.repeat,
-        ),
       ),
       padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
       child: userAsync.when(
