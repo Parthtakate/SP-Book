@@ -54,47 +54,47 @@ class FirestoreBackupService {
     // On cold starts, FirebaseAuth.instance.currentUser can be null for
     // up to ~1-2 seconds while the SDK restores the persisted session.
     if (user == null) {
-      debugPrint('[AUTH][$_ts] currentUser is null — waiting for authStateChanges (up to 5s)...');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] currentUser is null — waiting for authStateChanges (up to 5s)...');
       try {
         user = await FirebaseAuth.instance
             .authStateChanges()
             .firstWhere((u) => u != null)
             .timeout(const Duration(seconds: 5));
-        debugPrint('[AUTH][$_ts] authStateChanges emitted user: uid=${user?.uid}');
+        if (kDebugMode) debugPrint('[AUTH][$_ts] authStateChanges emitted user: uid=${user?.uid}');
       } on TimeoutException {
-        debugPrint('[AUTH][$_ts] authStateChanges timed out after 5s — user still null');
+        if (kDebugMode) debugPrint('[AUTH][$_ts] authStateChanges timed out after 5s — user still null');
       }
     }
 
     // Last resort: try to forcefully restore Google session
     if (user == null) {
-      debugPrint('[AUTH][$_ts] Still null — attempting tryRestoreSessionSilently()...');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] Still null — attempting tryRestoreSessionSilently()...');
       try {
         await AuthService().tryRestoreSessionSilently();
         user = FirebaseAuth.instance.currentUser;
-        debugPrint('[AUTH][$_ts] After silent restore: uid=${user?.uid}');
+        if (kDebugMode) debugPrint('[AUTH][$_ts] After silent restore: uid=${user?.uid}');
       } catch (e) {
-        debugPrint('[AUTH][$_ts] tryRestoreSessionSilently() failed: $e');
+        if (kDebugMode) debugPrint('[AUTH][$_ts] tryRestoreSessionSilently() failed: $e');
       }
     }
 
     if (user == null) {
-      debugPrint('[ERROR][$_ts] _getUidWithSessionCheck: user is STILL null — throwing NotSignedInException');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] _getUidWithSessionCheck: user is STILL null — throwing NotSignedInException');
       throw NotSignedInException();
     }
 
     try {
-      debugPrint('[AUTH][$_ts] Validating ID token for uid=${user.uid}...');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] Validating ID token for uid=${user.uid}...');
       await user.getIdToken();
-      debugPrint('[AUTH][$_ts] ID token valid');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] ID token valid');
     } on FirebaseAuthException catch (e) {
-      debugPrint('[AUTH][$_ts] ID token invalid ($e) — refreshing...');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] ID token invalid ($e) — refreshing...');
       await _refreshAuthToken();
       user = FirebaseAuth.instance.currentUser;
       if (user == null) throw NotSignedInException();
-      debugPrint('[AUTH][$_ts] Token refreshed, uid=${user.uid}');
+      if (kDebugMode) debugPrint('[AUTH][$_ts] Token refreshed, uid=${user.uid}');
     }
-    debugPrint('[AUTH][$_ts] _getUidWithSessionCheck() returning uid=${user.uid}');
+    if (kDebugMode) debugPrint('[AUTH][$_ts] _getUidWithSessionCheck() returning uid=${user.uid}');
     return user.uid;
   }
 
@@ -148,12 +148,15 @@ class FirestoreBackupService {
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
 
-    final customers = db.getAllCustomers();
+    // Include ALL customers (active + soft-deleted) so the Recycle Bin
+    // survives a device swap or reinstall. getAllCustomers() was incorrect
+    // here because it filters isDeleted==true (Phase 4 audit fix — P0).
+    final customers = db.customersBox.values.toList();
     final transactions = db.transactionsBox.values.toList();
 
     // SAFETY GUARD: Never upload empty data to cloud.
     if (customers.isEmpty && transactions.isEmpty) {
-      debugPrint('[FirestoreBackup] Skipping backup — local data is empty. Cloud data preserved.');
+      if (kDebugMode) debugPrint('[FirestoreBackup] Skipping backup — local data is empty. Cloud data preserved.');
       return;
     }
 
@@ -267,7 +270,7 @@ class FirestoreBackupService {
           final lastBackupAt = data?['lastBackupAt'];
           if (lastBackupAt is Timestamp) {
             await db.setLastAcknowledgedServerTime(lastBackupAt.millisecondsSinceEpoch);
-            debugPrint('[SYNC][$_ts] Stored server timestamp: ${lastBackupAt.millisecondsSinceEpoch}');
+            if (kDebugMode) debugPrint('[SYNC][$_ts] Stored server timestamp: ${lastBackupAt.millisecondsSinceEpoch}');
           }
         }
       });
@@ -300,7 +303,7 @@ class FirestoreBackupService {
 
     try {
       // Fetch both collections concurrently
-      debugPrint('[SYNC][$_ts] restoreAll() fetching customers & transactions from Firestore...');
+      if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() fetching customers & transactions from Firestore...');
       final results = await Future.wait([
         _withAuthRetry(() => _firestore
             .collection('users').doc(uid).collection('customers')
@@ -322,12 +325,14 @@ class FirestoreBackupService {
           .map((d) => TransactionModel.fromFirestore(d.data()))
           .toList();
 
-      debugPrint('[SYNC][$_ts] restoreAll() fetched ${remoteCustomers.length} customers, '
-          '${remoteTransactions.length} transactions');
+      if (kDebugMode) {
+        debugPrint('[SYNC][$_ts] restoreAll() fetched ${remoteCustomers.length} customers, '
+            '${remoteTransactions.length} transactions');
+      }
 
       // SAFETY GUARD: Never overwrite with empty remote data
       if (remoteCustomers.isEmpty && remoteTransactions.isEmpty) {
-        debugPrint('[SYNC][$_ts] restoreAll() — remote is empty, keeping local data intact');
+        if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() — remote is empty, keeping local data intact');
         return;
       }
 
@@ -366,24 +371,26 @@ class FirestoreBackupService {
         }
       }
 
-      debugPrint('[SYNC][$_ts] Merge result: '
-          '${customersToSave.length}/${remoteCustomers.length} customers to update, '
-          '${transactionsToSave.length}/${remoteTransactions.length} transactions to update');
+      if (kDebugMode) {
+        debugPrint('[SYNC][$_ts] Merge result: '
+            '${customersToSave.length}/${remoteCustomers.length} customers to update, '
+            '${transactionsToSave.length}/${remoteTransactions.length} transactions to update');
+      }
 
       if (customersToSave.isNotEmpty) await db.saveAllCustomers(customersToSave);
       if (transactionsToSave.isNotEmpty) await db.saveAllTransactions(transactionsToSave);
 
       await db.setLastLocalModifiedAt(DateTime.now().millisecondsSinceEpoch);
-      debugPrint('[SYNC][$_ts] restoreAll() COMPLETED successfully');
+      if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() COMPLETED successfully');
 
     } on FirebaseException catch (e, stackTrace) {
-      debugPrint('[ERROR][$_ts] restoreAll() FirebaseException: $e');
-      debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] restoreAll() FirebaseException: $e');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       if (_isAuthOrPermissionError(e)) throw FirestorePermissionException();
       rethrow;
     } catch (e, stackTrace) {
-      debugPrint('[ERROR][$_ts] restoreAll() unexpected error: $e');
-      debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] restoreAll() unexpected error: $e');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       rethrow;
     } finally {
       // ── TOCTOU SAFETY: Clear the flag only after ALL writes are done ──
@@ -409,10 +416,10 @@ class FirestoreBackupService {
           .timeout(const Duration(seconds: 10),
               onTimeout: () => throw FirestoreTimeoutException()));
       final result = doc.exists ? doc.data() : null;
-      debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — exists=${doc.exists}, data=$result');
+      if (kDebugMode) debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — exists=${doc.exists}, data=$result');
       return result;
     } on TimeoutException {
-      debugPrint('[ERROR][$_ts] getBackupInfo() TIMED OUT');
+      if (kDebugMode) debugPrint('[ERROR][$_ts] getBackupInfo() TIMED OUT');
       throw FirestoreTimeoutException();
     }
   }

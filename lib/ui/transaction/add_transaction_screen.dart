@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../models/customer.dart';
 import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
+import '../../services/safe_text.dart';
 
 class AddTransactionScreen extends ConsumerStatefulWidget {
   final Customer customer;
@@ -131,9 +132,10 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
   @override
   Widget build(BuildContext context) {
     final color = widget.isGot ? Colors.green : Colors.red;
+    final safeCustomerName = safeText(widget.customer.name, fallback: 'Unknown');
     final title = widget.existingTransaction != null 
         ? 'Edit Transaction' 
-        : widget.isGot ? 'You Got from ${widget.customer.name}' : 'You Gave to ${widget.customer.name}';
+        : widget.isGot ? 'You Got from $safeCustomerName' : 'You Gave to $safeCustomerName';
 
     return Scaffold(
       appBar: AppBar(

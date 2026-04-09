@@ -9,6 +9,7 @@ import '../../providers/transaction_provider.dart';
 import '../reminder/set_reminder_screen.dart';
 import '../reports/reports_screen.dart';
 import '../transaction/add_transaction_screen.dart';
+import 'edit_customer_screen.dart';
 import '../../services/pdf_service.dart';
 import '../../services/safe_text.dart';
 
@@ -174,6 +175,16 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
             headerColor: headerColor,
             isFiltered: _filterRange != null,
             onBack: () => Navigator.pop(context),
+            onEdit: () async {
+              await Navigator.push<Customer>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => EditCustomerScreen(customer: widget.customer),
+                ),
+              );
+              // Riverpod state is automatically updated via customersProvider
+              // — no extra invalidation needed here.
+            },
             onFilter: () async {
               if (_filterRange != null) {
                 // Clear filter
@@ -336,6 +347,7 @@ class _GradientHeader extends StatelessWidget {
   final Color headerColor;
   final bool isFiltered;
   final VoidCallback onBack;
+  final VoidCallback onEdit;
   final VoidCallback onFilter;
   final VoidCallback onCall;
   final VoidCallback onReminder;
@@ -352,6 +364,7 @@ class _GradientHeader extends StatelessWidget {
     required this.headerColor,
     required this.isFiltered,
     required this.onBack,
+    required this.onEdit,
     required this.onFilter,
     required this.onCall,
     required this.onReminder,
@@ -399,6 +412,12 @@ class _GradientHeader extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  // Phase 4: Edit customer button
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: Colors.white),
+                    tooltip: 'Edit Customer',
+                    onPressed: onEdit,
                   ),
                   if (isFiltered)
                     Container(

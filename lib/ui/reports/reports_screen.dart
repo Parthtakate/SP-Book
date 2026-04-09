@@ -7,6 +7,7 @@ import '../../providers/db_provider.dart';
 import '../../services/pdf_service.dart';
 import '../../services/csv_service.dart';
 import '../../providers/reports_provider.dart';
+import '../../services/safe_text.dart';
 
 // ── Formatters (unchanged) ──────────────────────────────────────────────────
 final _inrFormat = NumberFormat('#,##,##0.00', 'en_IN');
@@ -972,7 +973,7 @@ class _EntryRow extends StatelessWidget {
           Expanded(
             flex: 3,
             child: Text(
-              entry.customerName,
+              safeText(entry.customerName, fallback: 'Unknown'),
               style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

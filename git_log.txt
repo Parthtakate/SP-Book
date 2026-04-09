@@ -1,0 +1,10 @@
+﻿3aa9dd6 fix: resolve _NativeParagraphBuilder UTF-16 crash (53 events, 4 users)
+d4b09f9 fix: remove offline data wipe + implement Share & Rate Us [stable checkpoint 2026-04-04]
+36e08d6 fix: settings screen syntax and sign-in visibility
+db38cac fix: sanitize DB strings to prevent UTF-8 text rendering crash
+3f326d2 fix: safe Crashlytics init ΓÇö only in release, wrapped in try-catch
+3379333 feat: add Crashlytics, 1-min lifecycle lock, CSV export
+1793868 Checkpoint before production enhancements
+bfb7e18 cloud fixed
+50c2c92 chore: before audit
+747e332 Finalizing SPBOOKS app features: UI overhaul, view report with date filtering, and login fixes

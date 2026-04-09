@@ -12,6 +12,7 @@ import '../providers/db_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../services/pdf_service.dart';
 import 'onboarding_screen.dart';
+import 'settings/recycle_bin_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -274,6 +275,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                             onTap: () => _exportFullPdf(context),
                           ),
                         ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
+
+                    // ---- Recycle Bin
+                    _SectionLabel('Storage'),
+                    const SizedBox(height: 12),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: _ActionCard(
+                        icon: Icons.delete_outline_rounded,
+                        iconColor: const Color(0xFFF59E0B),
+                        title: 'Recycle Bin',
+                        subtitle: 'View and restore recently deleted items',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const RecycleBinScreen(),
+                          ),
+                        ),
                       ),
                     ),
 

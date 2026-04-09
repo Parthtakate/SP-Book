@@ -216,12 +216,59 @@ class DbService {
 
   Box<Customer> get customersBox => _customers!;
 
-  /// Returns all customers sorted newest-first.
+  /// Returns all active (non-deleted) customers sorted newest-first.
   /// Fix 5: Result is cached and only re-sorted when the box is mutated.
   List<Customer> getAllCustomers() {
-    _sortedCustomersCache ??= _customers!.values.toList()
+    _sortedCustomersCache ??= _customers!.values
+        .where((c) => !c.isDeleted)
+        .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return _sortedCustomersCache!;
+  }
+
+  /// Returns all soft-deleted customers for the Recycle Bin.
+  List<Customer> getDeletedCustomers() {
+    return _customers!.values
+        .where((c) => c.isDeleted)
+        .toList()
+      ..sort((a, b) => (b.updatedAt ?? b.createdAt).compareTo(a.updatedAt ?? a.createdAt));
+  }
+
+  /// Returns all soft-deleted transactions for the Recycle Bin.
+  List<TransactionModel> getDeletedTransactions() {
+    return _transactions!.values
+        .where((t) => t.isDeleted)
+        .toList()
+      ..sort((a, b) => (b.updatedAt ?? b.date).compareTo(a.updatedAt ?? a.date));
+  }
+
+  /// Restores a soft-deleted customer (sets isDeleted=false).
+  Future<void> restoreCustomer(String id) async {
+    final customer = _customers!.get(id);
+    if (customer == null) return;
+    final restored = customer.copyWith(isDeleted: false, updatedAt: DateTime.now());
+    await _customers!.put(id, restored);
+    _invalidateSortedCache();
+    if (!isRestoring) {
+      await _syncQueue!.put(
+        'customer_$id',
+        {'type': 'customer', 'id': id, 'action': 'set'},
+      );
+    }
+  }
+
+  /// Restores a soft-deleted transaction (sets isDeleted=false).
+  Future<void> restoreTransaction(String transactionId) async {
+    final txn = _transactions!.get(transactionId);
+    if (txn == null) return;
+    final restored = txn.copyWith(isDeleted: false, updatedAt: DateTime.now());
+    await _transactions!.put(transactionId, restored);
+    if (!isRestoring) {
+      await _syncQueue!.put(
+        'transaction_$transactionId',
+        {'type': 'transaction', 'id': transactionId, 'action': 'set'},
+      );
+    }
   }
 
   Future<void> saveCustomer(Customer customer) async {
@@ -243,21 +290,47 @@ class DbService {
   }
 
   Future<void> deleteCustomer(String id) async {
-    // ── Fix 3: O(1) lookup via index instead of O(n) full-box scan ──────────
-    final txnIds = _txnIdsForCustomer(id);
+    // ── Phase 4: Soft Delete — mark as isDeleted instead of destroying the record ──
+    final customer = _customers!.get(id);
+    if (customer == null) return;
 
-    // Step 2: Write ALL sync queue entries atomically BEFORE Hive deletions.
-    // If crash occurs after this write, next sync will still push correct deletes.
+    final softDeleted = customer.copyWith(
+      isDeleted: true,
+      updatedAt: DateTime.now(),
+    );
+    await _customers!.put(id, softDeleted);
+    _invalidateSortedCache(); // Fix 5
+
+    // Soft-delete all child transactions too
+    final txnIds = _txnIdsForCustomer(id);
+    for (final txnId in txnIds) {
+      final txn = _transactions!.get(txnId);
+      if (txn != null && !txn.isDeleted) {
+        final softDeletedTxn = txn.copyWith(
+          isDeleted: true,
+          updatedAt: DateTime.now(),
+        );
+        await _transactions!.put(txnId, softDeletedTxn);
+      }
+    }
+
+    // Push 'set' (not 'delete') so Firestore receives the isDeleted=true record
     if (!isRestoring) {
       final queueEntries = <String, dynamic>{
-        'customer_$id': {'type': 'customer', 'id': id, 'action': 'delete'},
+        'customer_$id': {'type': 'customer', 'id': id, 'action': 'set'},
         for (final txnId in txnIds)
-          'transaction_$txnId': {'type': 'transaction', 'id': txnId, 'action': 'delete'},
+          'transaction_$txnId': {'type': 'transaction', 'id': txnId, 'action': 'set'},
       };
       await _syncQueue!.putAll(queueEntries);
     }
+  }
 
-    // Step 3: Delete transactions with best-effort image cleanup
+  /// Permanently removes a customer and their transactions from Hive + queues hard-delete.
+  /// Only called from the Recycle Bin screen.
+  Future<void> permanentlyDeleteCustomer(String id) async {
+    final txnIds = _txnIdsForCustomer(id);
+
+    // Best-effort image cleanup
     for (final txnId in txnIds) {
       final txn = _transactions!.get(txnId);
       if (txn?.imagePath != null) {
@@ -268,11 +341,19 @@ class DbService {
       }
     }
     await _transactions!.deleteAll(txnIds);
-
-    // Step 4: Remove from index and delete customer record
     _indexRemoveCustomer(id); // Fix 3
     _invalidateSortedCache(); // Fix 5
     await _customers!.delete(id);
+
+    // Hard-delete sync
+    if (!isRestoring) {
+      final queueEntries = <String, dynamic>{
+        'customer_$id': {'type': 'customer', 'id': id, 'action': 'delete'},
+        for (final txnId in txnIds)
+          'transaction_$txnId': {'type': 'transaction', 'id': txnId, 'action': 'delete'},
+      };
+      await _syncQueue!.putAll(queueEntries);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -281,14 +362,15 @@ class DbService {
 
   Box<TransactionModel> get transactionsBox => _transactions!;
 
-  /// Returns all transactions for [customerId], newest-first.
+  /// Returns all active (non-deleted) transactions for [customerId], newest-first.
   /// Fix 3: Uses the index for O(1) ID lookup, then fetches by key.
   List<TransactionModel> getTransactionsForCustomer(String customerId) {
     final ids = _txnIdsForCustomer(customerId);
     final result = <TransactionModel>[];
     for (final id in ids) {
       final txn = _transactions!.get(id);
-      if (txn != null) result.add(txn);
+      // Phase 4: filter out soft-deleted transactions from the active view
+      if (txn != null && !txn.isDeleted) result.add(txn);
     }
     result.sort((a, b) => b.date.compareTo(a.date));
     return result;
@@ -318,7 +400,25 @@ class DbService {
     }
   }
 
+  /// Soft-deletes a single transaction (marks isDeleted=true).
   Future<void> deleteTransaction(String transactionId) async {
+    final txn = _transactions!.get(transactionId);
+    if (txn == null) return;
+    // Phase 4: Soft delete — keep in Hive but hide from active views
+    final softDeleted = txn.copyWith(isDeleted: true, updatedAt: DateTime.now());
+    await _transactions!.put(transactionId, softDeleted);
+    // NOTE: intentionally NOT removing from _txnIndex — the record still exists
+    // and may be restored. The active query filters it out via isDeleted check.
+    if (!isRestoring) {
+      await _syncQueue!.put(
+        'transaction_$transactionId',
+        {'type': 'transaction', 'id': transactionId, 'action': 'set'},
+      );
+    }
+  }
+
+  /// Permanently removes a single transaction from Hive. Only for the Recycle Bin.
+  Future<void> permanentlyDeleteTransaction(String transactionId) async {
     final txn = _transactions!.get(transactionId);
     if (txn?.imagePath != null) {
       try {
@@ -352,5 +452,79 @@ class DbService {
     await _syncQueue!.clear();
     _txnIndex.clear();          // Fix 3: reset index
     _invalidateSortedCache();   // Fix 5: invalidate cache
+  }
+
+  // ---------------------------------------------------------------------------
+  // P2: Auto-purge items that have been in the Recycle Bin for > 30 days.
+  // Called once on startup (after init) to keep Hive and Firestore clean.
+  // ---------------------------------------------------------------------------
+
+  /// Permanently removes soft-deleted records older than [retentionDays] days.
+  /// Queues hard-delete sync actions so Firestore is cleaned up too.
+  Future<int> autopurgeDeletedItems({int retentionDays = 30}) async {
+    final cutoff = DateTime.now().subtract(Duration(days: retentionDays));
+    int purgedCount = 0;
+
+    // --- Customers ---
+    final expiredCustomers = _customers!.values
+        .where((c) => c.isDeleted && (c.updatedAt?.isBefore(cutoff) ?? false))
+        .toList();
+
+    for (final c in expiredCustomers) {
+      final txnIds = _txnIdsForCustomer(c.id);
+      // Hard-delete child transactions
+      for (final txnId in txnIds) {
+        final txn = _transactions!.get(txnId);
+        if (txn?.imagePath != null) {
+          try {
+            final file = File(txn!.imagePath!);
+            if (await file.exists()) await file.delete();
+          } catch (_) {}
+        }
+      }
+      await _transactions!.deleteAll(txnIds);
+      _indexRemoveCustomer(c.id);
+      await _customers!.delete(c.id);
+
+      // Queue hard-delete sync for each purged record
+      if (!isRestoring) {
+        final queueEntries = <String, dynamic>{
+          'customer_${c.id}': {'type': 'customer', 'id': c.id, 'action': 'delete'},
+          for (final txnId in txnIds)
+            'transaction_$txnId': {'type': 'transaction', 'id': txnId, 'action': 'delete'},
+        };
+        await _syncQueue!.putAll(queueEntries);
+      }
+      purgedCount++;
+    }
+
+    // --- Orphan transactions (soft-deleted but customer still active / no parent) ---
+    final expiredTxns = _transactions!.values
+        .where((t) => t.isDeleted && (t.updatedAt?.isBefore(cutoff) ?? false))
+        .toList();
+
+    for (final t in expiredTxns) {
+      if (t.imagePath != null) {
+        try {
+          final file = File(t.imagePath!);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
+      _indexRemoveTxn(t.customerId, t.id);
+      await _transactions!.delete(t.id);
+      if (!isRestoring) {
+        await _syncQueue!.put(
+          'transaction_${t.id}',
+          {'type': 'transaction', 'id': t.id, 'action': 'delete'},
+        );
+      }
+      purgedCount++;
+    }
+
+    if (purgedCount > 0) {
+      _invalidateSortedCache();
+      debugPrint('[DbService] autopurge: permanently removed $purgedCount items older than $retentionDays days.');
+    }
+    return purgedCount;
   }
 }

@@ -87,7 +87,9 @@ class TransactionModelAdapter extends TypeAdapter<TransactionModel> {
       date: DateTime.fromMillisecondsSinceEpoch(reader.readInt()),
       imagePath: reader.readBool() ? reader.readString() : null,
       updatedAt: reader.readBool() ? DateTime.fromMillisecondsSinceEpoch(reader.readInt()) : null,
-      isDeleted: reader.readBool(),
+      isDeleted: () {
+        try { return reader.readBool(); } catch (_) { return false; }
+      }(),
     );
   }
 

@@ -67,7 +67,9 @@ class CustomerAdapter extends TypeAdapter<Customer> {
       phone: reader.read(),
       createdAt: DateTime.fromMillisecondsSinceEpoch(reader.readInt()),
       updatedAt: reader.readBool() ? DateTime.fromMillisecondsSinceEpoch(reader.readInt()) : null,
-      isDeleted: reader.readBool(),
+      isDeleted: () {
+        try { return reader.readBool(); } catch (_) { return false; }
+      }(),
     );
   }
 

@@ -22,6 +22,7 @@ class TransactionService {
     required bool isGot,
     String? note,
     String? imagePath,
+    DateTime? date, // Phase 4: allow back-dating
   }) async {
     final transaction = TransactionModel(
       id: const Uuid().v4(),
@@ -29,7 +30,7 @@ class TransactionService {
       amountInPaise: amountInPaise,
       isGot: isGot,
       note: note ?? '',
-      date: DateTime.now(),
+      date: date ?? DateTime.now(), // use provided date or default to now
       imagePath: imagePath,
     );
     await ref.read(dbServiceProvider).saveTransaction(transaction);

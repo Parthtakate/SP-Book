@@ -45,6 +45,14 @@ void main() async {
   final dbService = DbService();
   await dbService.init();
 
+  // P2: Silently purge Recycle Bin items older than 30 days on every startup.
+  // Wrapped in try-catch so any edge-case failure never blocks app launch.
+  try {
+    await dbService.autopurgeDeletedItems(retentionDays: 30);
+  } catch (e) {
+    debugPrint('[main] autopurge failed (non-fatal): $e');
+  }
+
   // SAFETY: We intentionally do NOT clear local data here based on
   // FirebaseAuth.currentUser being null. currentUser can be null during:
   //   - offline startup (no network)
