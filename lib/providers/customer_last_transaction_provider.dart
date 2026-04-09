@@ -7,7 +7,7 @@ import 'transaction_provider.dart';
 /// Watches [customerTransactionsProvider] to stay reactive.
 /// Uses the existing sorted order (newest-first) — no extra sort needed.
 final customerLastTransactionProvider =
-    Provider.family<DateTime?, String>((ref, customerId) {
+    Provider.autoDispose.family<DateTime?, String>((ref, customerId) {
   final txns = ref.watch(customerTransactionsProvider(customerId));
   if (txns.isEmpty) return null;
   return txns.first.date;

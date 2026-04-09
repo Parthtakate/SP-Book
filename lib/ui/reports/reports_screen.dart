@@ -128,7 +128,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   Future<void> _exportPdf() async {
     try {
       _showSnack('Generating PDF…');
-      final statement = ref.read(accountStatementProvider);
+      final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await PdfService.generateAccountStatementPdf(
         userName: _getUserName(),
@@ -145,7 +145,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   Future<void> _exportCsv() async {
     try {
       _showSnack('Generating CSV…');
-      final statement = ref.read(accountStatementProvider);
+      final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await CsvService.generateAccountStatementCsv(
         userName: _getUserName(),
@@ -153,7 +153,6 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         dateRange: dateRange,
       );
       if (filePath == null || !mounted) return;
-      // Fixed: migrated from deprecated Share.shareXFiles to SharePlus v12 API
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(filePath)],
@@ -169,7 +168,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   Future<void> _sharePdf() async {
     try {
       _showSnack('Generating PDF…');
-      final statement = ref.read(accountStatementProvider);
+      final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await PdfService.generateAccountStatementPdf(
         userName: _getUserName(),
@@ -177,7 +176,6 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         dateRange: dateRange,
       );
       if (filePath == null) return;
-      // Fixed: migrated from deprecated Share.shareXFiles to SharePlus v12 API
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(filePath)],
@@ -202,7 +200,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final statement = ref.watch(accountStatementProvider);
+    final statementAsync = ref.watch(accountStatementProvider);
     final userName = _getUserName();
     final isFiltered = _filterMode == 'DATE RANGE';
 
@@ -217,52 +215,62 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             onBack: () => Navigator.pop(context),
           ),
 
-          // ── Scrollable Body ──────────────────────────────────────────────
+          // ── Body: AsyncValue unwrap ──────────────────────────────────────
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // ── Summary Cards ────────────────────────────────────────
-                  _SummaryRow(statement: statement),
-
-                  const SizedBox(height: 20),
-
-                  // ── Filter + Search Card ─────────────────────────────────
-                  _FilterCard(
-                    filterMode: _filterMode,
-                    entryCount: statement.entryCount,
-                    searchCtrl: _searchCtrl,
-                    startDate: _startDate,
-                    endDate: _endDate,
-                    isFiltered: isFiltered,
-                    onFilterChanged: _onFilterChanged,
-                    onSearchChanged: (v) =>
-                        ref.read(reportSearchTextProvider.notifier).update(v),
-                    onPickStart: _pickStartDate,
-                    onPickEnd: _pickEndDate,
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // ── Statement Table ──────────────────────────────────────
-                  _StatementTable(statement: statement),
-
-                  // ── Footer ───────────────────────────────────────────────
-                  const SizedBox(height: 16),
-                  Center(
-                    child: Text(
-                      'Generated: ${_timestampFormat.format(DateTime.now())}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade400,
-                        fontStyle: FontStyle.italic,
+            child: statementAsync.when(
+              loading: () => const _StatementShimmer(),
+              error: (e, _) => Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, color: _kDebit, size: 40),
+                    const SizedBox(height: 12),
+                    const Text('Failed to load statement',
+                        style: TextStyle(color: _kDebit)),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => ref.invalidate(accountStatementProvider),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+              data: (statement) => SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SummaryRow(statement: statement),
+                    const SizedBox(height: 20),
+                    _FilterCard(
+                      filterMode: _filterMode,
+                      entryCount: statement.entryCount,
+                      searchCtrl: _searchCtrl,
+                      startDate: _startDate,
+                      endDate: _endDate,
+                      isFiltered: isFiltered,
+                      onFilterChanged: _onFilterChanged,
+                      onSearchChanged: (v) =>
+                          ref.read(reportSearchTextProvider.notifier).update(v),
+                      onPickStart: _pickStartDate,
+                      onPickEnd: _pickEndDate,
+                    ),
+                    const SizedBox(height: 20),
+                    _StatementTable(statement: statement),
+                    const SizedBox(height: 16),
+                    Center(
+                      child: Text(
+                        'Generated: ${_timestampFormat.format(DateTime.now())}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey.shade400,
+                          fontStyle: FontStyle.italic,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                    const SizedBox(height: 16),
+                  ],
+                ),
               ),
             ),
           ),
@@ -272,6 +280,133 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             onPdf: _exportPdf,
             onCsv: _exportCsv,
             onShare: _sharePdf,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// Shimmer loading placeholder
+// ════════════════════════════════════════════════════════════════════════════
+
+class _StatementShimmer extends StatefulWidget {
+  const _StatementShimmer();
+
+  @override
+  State<_StatementShimmer> createState() => _StatementShimmerState();
+}
+
+class _StatementShimmerState extends State<_StatementShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _anim = Tween<double>(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Widget _bar({double width = double.infinity, double height = 14.0}) {
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, _) => Container(
+        width: width,
+        height: height,
+        margin: const EdgeInsets.symmetric(vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300.withValues(alpha: _anim.value),
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Summary cards skeleton
+          Row(
+            children: [
+              for (int i = 0; i < 3; i++) ...[
+                Expanded(
+                  child: Container(
+                    height: 88,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _bar(width: 24, height: 24),
+                        const SizedBox(height: 6),
+                        _bar(width: 50, height: 10),
+                        _bar(width: 70, height: 12),
+                      ],
+                    ),
+                  ),
+                ),
+                if (i < 2) const SizedBox(width: 10),
+              ],
+            ],
+          ),
+          const SizedBox(height: 20),
+          // Filter card skeleton
+          Container(
+            height: 72,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(children: [_bar(), _bar(width: 200)]),
+          ),
+          const SizedBox(height: 20),
+          // Table skeleton
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: List.generate(
+                8,
+                (_) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      _bar(width: 40, height: 10),
+                      const SizedBox(width: 8),
+                      Expanded(child: _bar(height: 10)),
+                      const SizedBox(width: 8),
+                      _bar(width: 60, height: 10),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
       ),

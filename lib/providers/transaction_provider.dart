@@ -65,7 +65,7 @@ final transactionServiceProvider = Provider<TransactionService>((ref) {
 // ---------------------------------------------------------------------------
 
 final customerTransactionsProvider =
-    Provider.family<List<TransactionModel>, String>((ref, customerId) {
+    Provider.autoDispose.family<List<TransactionModel>, String>((ref, customerId) {
   final db = ref.watch(dbServiceProvider);
   return db.getTransactionsForCustomer(customerId);
 });
@@ -77,7 +77,7 @@ final customerTransactionsProvider =
 // ---------------------------------------------------------------------------
 
 final customerBalanceProvider =
-    Provider.family<int, String>((ref, customerId) {
+    Provider.autoDispose.family<int, String>((ref, customerId) {
   final transactions = ref.watch(customerTransactionsProvider(customerId));
   int balance = 0;
   for (final t in transactions) {

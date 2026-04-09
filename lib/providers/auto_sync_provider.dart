@@ -29,7 +29,6 @@ class AutoSyncState {
   }) {
     return AutoSyncState(
       status: status ?? this.status,
-      // If a new status is provided but no new date, retain the old date unless specified otherwise (but dart doesn't easily do Optionals, so we just use the existing one if null)
       lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
     );
   }
@@ -39,6 +38,8 @@ final firestoreBackupServiceProvider = Provider<FirestoreBackupService>((ref) {
   return FirestoreBackupService();
 });
 
+// ── isRestoringProvider: single source of truth ──
+// DbService reads this via an injected callback (no Riverpod import needed there).
 class IsRestoringNotifier extends Notifier<bool> {
   @override
   bool build() => false;
@@ -59,35 +60,48 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
   StreamSubscription? _txnSub;
   StreamSubscription? _connSub;
 
-  bool _isSyncing = false;
+  // ── Single unified sync lock (fixes overlapping mutex flags) ──
+  bool _syncLock = false;
+
   bool _hasStarted = false;
-  bool _isSyncRunning = false;
+
+  // ── Fix 5: Track whether the startup sync has completed ──
+  // If connectivity returns while startup sync hasn't finished yet,
+  // we re-run _syncStartupCheck instead of _onDataChanged.
+  bool _startupSyncCompleted = false;
 
   String get _ts => DateTime.now().toIso8601String();
 
   @override
   AutoSyncState build() {
-    // We listen to auth state changes to auto-start/stop
+    // Wire up isRestoring into DbService so it doesn't need to import Riverpod
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _injectRestoringCallback();
+    });
+
+    // Listen to auth state changes to auto-start/stop
     ref.listen(currentUserProvider, (previous, next) {
-      debugPrint('[AUTH][$_ts] currentUserProvider changed: previous=${previous?.value?.uid}, next=${next.value?.uid}');
+      debugPrint('[AUTH][$_ts] currentUserProvider changed: '
+          'previous=${previous?.value?.uid}, next=${next.value?.uid}');
       final db = ref.read(dbServiceProvider);
       if ((next.value != null || db.isLoggedIn) && !_hasStarted) {
-        debugPrint('[AUTH][$_ts] Auth user available or db.isLoggedIn — calling start()');
+        debugPrint('[AUTH][$_ts] Auth user available — calling start()');
         start();
       } else if (next.value == null && !db.isLoggedIn && _hasStarted) {
-        debugPrint('[AUTH][$_ts] Auth user is null and db not logged in — calling stop()');
+        debugPrint('[AUTH][$_ts] Auth user null — calling stop()');
         stop();
       }
     });
 
-    // Handle startup edge cases: if already logged in according to db, force start 
-    // even before the auth provider pushes its first data event.
+    // Handle startup edge cases: db says logged in but auth event hasn't fired yet
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final firebaseUser = FirebaseAuth.instance.currentUser;
       final dbLoggedIn = ref.read(dbServiceProvider).isLoggedIn;
-      debugPrint('[SYNC][$_ts] postFrameCallback: FirebaseAuth.currentUser=${firebaseUser?.uid}, db.isLoggedIn=$dbLoggedIn, _hasStarted=$_hasStarted');
+      debugPrint('[SYNC][$_ts] postFrameCallback: '
+          'FirebaseAuth.currentUser=${firebaseUser?.uid}, '
+          'db.isLoggedIn=$dbLoggedIn, _hasStarted=$_hasStarted');
       if (dbLoggedIn && !_hasStarted) {
-        debugPrint('[SYNC][$_ts] postFrameCallback triggering start() (db says logged in, auth may still be null)');
+        debugPrint('[SYNC][$_ts] postFrameCallback triggering start()');
         start();
       }
     });
@@ -95,20 +109,25 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
     return const AutoSyncState();
   }
 
-  /// Called when the app starts or user authenticates
+  /// Inject a Riverpod-aware isRestoring getter into DbService.
+  void _injectRestoringCallback() {
+    final db = ref.read(dbServiceProvider);
+    db.injectRestoringCallback(() => ref.read(isRestoringProvider));
+  }
+
+  /// Called when the app starts or user authenticates.
   void start() {
     if (_hasStarted) return;
     _hasStarted = true;
+    _startupSyncCompleted = false;
 
     final firebaseUser = FirebaseAuth.instance.currentUser;
     debugPrint('[SYNC][$_ts] ========== start() called ==========');
-    debugPrint('[SYNC][$_ts] FirebaseAuth.currentUser at start(): uid=${firebaseUser?.uid}, email=${firebaseUser?.email}');
-    debugPrint('[SYNC][$_ts] Token state: isAnonymous=${firebaseUser?.isAnonymous}, emailVerified=${firebaseUser?.emailVerified}');
+    debugPrint('[SYNC][$_ts] FirebaseAuth.currentUser: uid=${firebaseUser?.uid}');
 
-    // Load initial synced at if we have it locally or remotely
     _syncStartupCheck(); // Fire & forget
 
-    // Watch internet connection to trigger retries if offline
+    // ── Fix 5: Connectivity listener — distinguish startup vs ongoing sync ──
     _connSub = Connectivity().onConnectivityChanged.listen((results) {
       if (results.contains(ConnectivityResult.none)) {
         if (state.status != SyncStatus.offline) {
@@ -117,14 +136,21 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
         }
       } else {
         if (state.status == SyncStatus.offline || state.status == SyncStatus.failed) {
-          debugPrint('[SYNC][$_ts] Connectivity: back ONLINE — triggering data change check');
-          _onDataChanged();
+          debugPrint('[SYNC][$_ts] Connectivity: back ONLINE');
+          if (!_startupSyncCompleted) {
+            // Startup sync was interrupted by being offline — retry it
+            debugPrint('[SYNC][$_ts] Startup not complete — re-running _syncStartupCheck()');
+            _syncStartupCheck();
+          } else {
+            // Normal reconnect — just push any pending local changes
+            debugPrint('[SYNC][$_ts] Startup complete — running _onDataChanged()');
+            _onDataChanged();
+          }
         }
       }
     });
 
     final db = ref.read(dbServiceProvider);
-    // Watch Hive changes
     _customerSub = db.customersBox.watch().listen((_) => _onDataChanged());
     _txnSub = db.transactionsBox.watch().listen((_) => _onDataChanged());
   }
@@ -135,28 +161,30 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
     _txnSub?.cancel();
     _connSub?.cancel();
     _hasStarted = false;
-    _isSyncing = false;
-    _isSyncRunning = false;
-    state = const AutoSyncState(); // Reset
+    _syncLock = false;
+    _startupSyncCompleted = false;
+    state = const AutoSyncState();
+  }
+
+  /// Forces a fresh startup cycle (e.g., after sign-in from settings screen).
+  void restart() {
+    stop();
+    start();
   }
 
   Future<void> _runBackgroundSync() async {
-    if (_isSyncRunning) {
-      debugPrint('[SYNC][$_ts] _runBackgroundSync() SKIPPED — already running');
+    if (_syncLock) {
+      debugPrint('[SYNC][$_ts] _runBackgroundSync() SKIPPED — lock held');
       return;
     }
-    _isSyncRunning = true;
+    _syncLock = true;
     debugPrint('[SYNC][$_ts] >>>>>> _runBackgroundSync() STARTED');
 
-    try {
-      ref.read(isRestoringProvider.notifier).setState(true);
+    ref.read(isRestoringProvider.notifier).setState(true);
 
-      // Allows Firebase auth tokens to settle harmlessly in the bg
+    try {
       debugPrint('[SYNC][$_ts] Waiting 800ms for auth tokens to settle...');
       await Future.delayed(const Duration(milliseconds: 800));
-
-      final userAfterDelay = FirebaseAuth.instance.currentUser;
-      debugPrint('[AUTH][$_ts] FirebaseAuth.currentUser AFTER 800ms delay: uid=${userAfterDelay?.uid}');
 
       final backupService = ref.read(firestoreBackupServiceProvider);
       final db = ref.read(dbServiceProvider);
@@ -185,48 +213,55 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
       debugPrint('[ERROR][$_ts] >>>>>> _runBackgroundSync() FAILED');
       debugPrint('[ERROR][$_ts] Error: $e');
       debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
-      debugPrint('[ERROR][$_ts] FirebaseAuth.currentUser at failure: uid=${FirebaseAuth.instance.currentUser?.uid}');
       state = state.copyWith(status: SyncStatus.failed);
     } finally {
       ref.read(isRestoringProvider.notifier).setState(false);
-      _isSyncRunning = false;
+      _syncLock = false;
     }
   }
 
   Future<void> _syncStartupCheck() async {
-    if (_isSyncing) {
-      debugPrint('[SYNC][$_ts] _syncStartupCheck() SKIPPED — already syncing');
+    if (_syncLock) {
+      debugPrint('[SYNC][$_ts] _syncStartupCheck() SKIPPED — lock held');
       return;
     }
-    _isSyncing = true;
+    _syncLock = true;
     state = state.copyWith(status: SyncStatus.syncing);
-
-    final firebaseUser = FirebaseAuth.instance.currentUser;
-    debugPrint('[SYNC][$_ts] ====== _syncStartupCheck() STARTED ======');
-    debugPrint('[AUTH][$_ts] FirebaseAuth.currentUser at _syncStartupCheck: uid=${firebaseUser?.uid}');
 
     final db = ref.read(dbServiceProvider);
     final backupService = ref.read(firestoreBackupServiceProvider);
 
+    debugPrint('[SYNC][$_ts] ====== _syncStartupCheck() STARTED ======');
+
     try {
-      final int lastLocalTime = db.lastLocalModifiedAt;
+      // ── Fix 6: If encryption key was lost, force a cloud restore immediately ──
+      if (db.encryptionKeyLost) {
+        debugPrint('[SYNC][$_ts] Encryption key lost — forcing full cloud restore');
+        _syncLock = false; // release before calling _runBackgroundSync
+        await _runBackgroundSync();
+        _startupSyncCompleted = true;
+        return;
+      }
+
       final bool isLocalEmpty =
           db.customersBox.isEmpty && db.transactionsBox.isEmpty;
 
-      debugPrint('[SYNC][$_ts] isLocalEmpty=$isLocalEmpty, lastLocalTime=$lastLocalTime, customers=${db.customersBox.length}, transactions=${db.transactionsBox.length}');
+      debugPrint('[SYNC][$_ts] isLocalEmpty=$isLocalEmpty, '
+          'customers=${db.customersBox.length}, transactions=${db.transactionsBox.length}');
 
-      // 1. Local Empty Flow (new install or just signed in fresh)
+      // 1. Local Empty Flow — new install or cleared device
       if (isLocalEmpty) {
         debugPrint('[SYNC][$_ts] Local empty — dispatching _runBackgroundSync()');
+        _syncLock = false;
         unawaited(_runBackgroundSync());
       }
-      // 2. Conflict Flow (Both might have data)
+      // 2. Conflict resolution — use Firestore server timestamps, NOT device clock
       else {
         debugPrint('[SYNC][$_ts] Local has data — calling getBackupInfo() for conflict check...');
         final backupInfo = await backupService.getBackupInfo();
         debugPrint('[SYNC][$_ts] getBackupInfo() returned: $backupInfo');
+
         int lastCloudTime = 0;
-        
         if (backupInfo != null) {
           final lastBackupAt = backupInfo['lastBackupAt'];
           if (lastBackupAt is Timestamp) {
@@ -235,60 +270,72 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
           }
         }
 
-        debugPrint('[SYNC][$_ts] Conflict comparison: lastCloudTime=$lastCloudTime, lastLocalTime=$lastLocalTime, diff=${lastCloudTime - lastLocalTime}ms');
+        // ── Fix 1: Use server-acknowledged timestamp instead of device clock ──
+        // lastAcknowledgedServerTime is a Firestore-issued timestamp stored locally
+        // after the last successful backup — immune to device clock manipulation.
+        final int lastAcknowledgedTime = db.lastAcknowledgedServerTime;
 
-        // Give 10 seconds leeway for timezone/clock drift before deciding cloud is definitively newer
-        if (lastCloudTime > lastLocalTime + 10000) {
-          debugPrint('[SYNC][$_ts] Cloud newer by ${(lastCloudTime - lastLocalTime) / 1000}s — restoring...');
+        // Fall back to lastLocalModifiedAt if we've never stored a server time
+        final int comparisonTime = lastAcknowledgedTime > 0
+            ? lastAcknowledgedTime
+            : db.lastLocalModifiedAt;
+
+        debugPrint('[SYNC][$_ts] Conflict comparison: '
+            'lastCloudTime=$lastCloudTime, '
+            'lastAcknowledgedTime=$lastAcknowledgedTime, '
+            'comparisonTime=$comparisonTime, '
+            'diff=${lastCloudTime - comparisonTime}ms');
+
+        // 10-second leeway absorbs minor network latency
+        if (lastCloudTime > comparisonTime + 10000) {
+          debugPrint('[SYNC][$_ts] Cloud newer by '
+              '${(lastCloudTime - comparisonTime) / 1000}s — restoring (merge)...');
+          _syncLock = false;
           unawaited(_runBackgroundSync());
-          state = state.copyWith(
-            status: SyncStatus.synced,
-            lastSyncedAt: DateTime.now(),
-          );
-        } else if (lastLocalTime > lastCloudTime + 10000) {
-          debugPrint('[SYNC][$_ts] Local newer by ${(lastLocalTime - lastCloudTime) / 1000}s — backing up...');
+          state = state.copyWith(status: SyncStatus.synced, lastSyncedAt: DateTime.now());
+        } else if (comparisonTime > lastCloudTime + 10000) {
+          debugPrint('[SYNC][$_ts] Local newer by '
+              '${(comparisonTime - lastCloudTime) / 1000}s — backing up...');
+          _syncLock = false;
           await backupService.backupIncremental(db);
-          state = state.copyWith(
-            status: SyncStatus.synced,
-            lastSyncedAt: DateTime.now(),
-          );
+          state = state.copyWith(status: SyncStatus.synced, lastSyncedAt: DateTime.now());
         } else {
           debugPrint('[SYNC][$_ts] In sync (within 10s leeway), nothing to do.');
           state = state.copyWith(status: SyncStatus.synced);
         }
       }
+
+      _startupSyncCompleted = true;
+
     } on NotSignedInException {
-      // Auth token not yet ready — don't mark as failed, just reset to idle.
-      debugPrint('[ERROR][$_ts] _syncStartupCheck: NotSignedInException — auth token NOT ready yet');
-      debugPrint('[AUTH][$_ts] FirebaseAuth.currentUser at NotSignedIn: uid=${FirebaseAuth.instance.currentUser?.uid}');
+      debugPrint('[ERROR][$_ts] _syncStartupCheck: NotSignedInException — auth not ready yet');
       state = state.copyWith(status: SyncStatus.idle);
     } on NoInternetException {
       debugPrint('[SYNC][$_ts] _syncStartupCheck: NoInternetException — going offline');
       state = state.copyWith(status: SyncStatus.offline);
+      // NOTE: _startupSyncCompleted stays false — will retry on reconnect
     } catch (e, stackTrace) {
       debugPrint('[ERROR][$_ts] _syncStartupCheck FAILED with error: $e');
       debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
-      debugPrint('[AUTH][$_ts] FirebaseAuth.currentUser at failure: uid=${FirebaseAuth.instance.currentUser?.uid}');
       state = state.copyWith(status: SyncStatus.failed);
     } finally {
-      _isSyncing = false;
+      if (_syncLock) _syncLock = false;
       debugPrint('[SYNC][$_ts] ====== _syncStartupCheck() ENDED ======');
     }
   }
 
-  /// Invalidates all data-driven Riverpod providers so UI rebuilds after restore.
+  /// Invalidates all data-driven providers so the UI rebuilds after a restore.
   void _invalidateDataProviders() {
     ref.invalidate(customersProvider);
+    ref.invalidate(customerBalanceMapProvider);
     ref.invalidate(dashboardBalancesProvider);
     if (kDebugMode) debugPrint('[AutoSync] Invalidated UI providers after restore.');
   }
 
   void _onDataChanged() {
-    final db = ref.read(dbServiceProvider);
-    if (db.isRestoring) return; // Ignore events triggered by restore
+    if (ref.read(isRestoringProvider)) return; // Ignore events triggered by restore
 
-    // Note: We only update local modification time when real user events fire.
-    // If the box changed, we note it.
+    final db = ref.read(dbServiceProvider);
     db.setLastLocalModifiedAt(DateTime.now().millisecondsSinceEpoch);
 
     _debounceTimer?.cancel();
@@ -296,15 +343,16 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
   }
 
   Future<void> _triggerBackup() async {
-    if (_isSyncing) return;
-    _isSyncing = true;
+    if (_syncLock) return;
+    _syncLock = true;
     state = state.copyWith(status: SyncStatus.syncing);
 
     final db = ref.read(dbServiceProvider);
     final backupService = ref.read(firestoreBackupServiceProvider);
 
     try {
-      debugPrint('[SYNC][$_ts] _triggerBackup() started — FirebaseAuth.currentUser=${FirebaseAuth.instance.currentUser?.uid}');
+      debugPrint('[SYNC][$_ts] _triggerBackup() started — '
+          'FirebaseAuth.currentUser=${FirebaseAuth.instance.currentUser?.uid}');
       await backupService.backupIncremental(db);
       debugPrint('[SYNC][$_ts] _triggerBackup() completed successfully');
       state = state.copyWith(
@@ -319,7 +367,7 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
       debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       state = state.copyWith(status: SyncStatus.failed);
     } finally {
-      _isSyncing = false;
+      _syncLock = false;
     }
   }
 }

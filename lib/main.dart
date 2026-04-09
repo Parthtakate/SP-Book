@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'services/db_service.dart';
+import 'services/firestore_backup_service.dart';
 import 'providers/db_provider.dart';
 import 'ui/app_lock_screen.dart';
 import 'ui/onboarding_screen.dart';
@@ -52,6 +53,29 @@ void main() async {
   // Clearing data in any of those cases would silently destroy all
   // customer records and transactions. Local data is ONLY cleared on
   // explicit user logout (see settings_screen.dart → _signOut).
+
+  // ── Phase 2: TOCTOU crash recovery ──
+  // If a restoreAll() was killed mid-operation, 'pendingRestore' is still true.
+  // We silently complete the restore before showing any UI so the user never
+  // sees a half-restored dataset.
+  if (dbService.pendingRestore && dbService.isLoggedIn) {
+    debugPrint('[main] Detected incomplete restore — resuming restoreAll()...');
+    try {
+      final backupService = FirestoreBackupService();
+      await backupService.restoreAll(dbService);
+      debugPrint('[main] restoreAll() recovery complete.');
+    } catch (e) {
+      // Restore failed (offline, auth issue). App will retry via AutoSyncNotifier.
+      debugPrint('[main] restoreAll() recovery failed: $e');
+    }
+  }
+
+  // ── Phase 2: Encryption key loss recovery ──
+  // If _getEncryptionCipher() failed, boxes are fresh (empty).
+  // AutoSyncNotifier checks db.encryptionKeyLost and triggers restoreAll().
+  if (dbService.encryptionKeyLost) {
+    debugPrint('[main] Encryption key lost — cloud restore will be triggered after launch.');
+  }
 
   runApp(
     ProviderScope(

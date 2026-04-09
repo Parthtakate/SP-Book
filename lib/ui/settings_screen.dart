@@ -49,7 +49,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
       await ref.read(dbServiceProvider).setLoggedIn(true);
-      // AutoSyncService picks this up and does a startup conflict check
+      // Force a fresh startup sync cycle so cloud data is merged immediately.
+      // Using restart() instead of relying on the auth listener ensures the
+      // startup conflict check runs even if the listener already fired.
+      ref.read(autoSyncProvider.notifier).restart();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -85,10 +88,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
     await ref.read(authServiceProvider).signOut();
     
     // Clear local data so user is fully logged out and data refreshes on next login
+    ref.read(autoSyncProvider.notifier).stop();
     await db.clearAll();
     await db.setOnboardingCompleted(false);
     await db.setLoggedIn(false);
     await db.setLastLocalModifiedAt(0);
+    await db.setLastAcknowledgedServerTime(0); // Reset server time on sign-out
 
     // Invalidate UI providers
     ref.invalidate(customersProvider);

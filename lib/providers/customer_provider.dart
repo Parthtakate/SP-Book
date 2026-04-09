@@ -66,6 +66,8 @@ class CustomerNotifier extends Notifier<List<Customer>> {
   Future<void> deleteCustomer(String id) async {
     final db = ref.read(dbServiceProvider);
     await db.deleteCustomer(id);
+    ref.invalidate(customerBalanceMapProvider);
+    ref.invalidate(dashboardBalancesProvider);
     state = db.getAllCustomers();
   }
 }
