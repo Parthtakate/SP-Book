@@ -1,5 +1,0 @@
-﻿Analyzing khata_app...                                          
-
-warning - Unused import: 'db_provider.dart' - lib\providers\customer_last_transaction_provider.dart:2:8 - unused_import
-  error - Undefined name 'anyTransactionChangeProvider' - lib\providers\reports_provider.dart:102:13 - undefined_identifier
-

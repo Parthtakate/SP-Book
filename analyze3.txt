@@ -1,8 +1,0 @@
-﻿Analyzing add_customer_screen.dart...                           
-
-   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\ui\customer\add_customer_screen.dart:164:32 - deprecated_member_use
-   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\ui\customer\add_customer_screen.dart:186:60 - deprecated_member_use
-   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\ui\customer\add_customer_screen.dart:208:81 - deprecated_member_use
-   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\ui\customer\add_customer_screen.dart:261:51 - deprecated_member_use
-   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\ui\customer\add_customer_screen.dart:355:41 - deprecated_member_use
-

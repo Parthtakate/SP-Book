@@ -1,8 +1,0 @@
-﻿Analyzing khata_app...
-
-  error - lib\providers\customer_provider.dart:13:28 - Undefined name 'StateProvider'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
-  error - lib\providers\customer_provider.dart:17:29 - Undefined name 'StateProvider'. Try correcting the name to one that is defined, or defining the name. - undefined_identifier
-   info - lib\providers\transaction_provider.dart:95:16 - Angle brackets will be interpreted as HTML. Try using backticks around the content with angle brackets, or try replacing `<` with `&lt;` and `>` with `&gt;`. - unintended_html_in_doc_comment
-   info - lib\ui\settings_screen.dart:162:30 - Unnecessary use of multiple underscores. Try using '_'. - unnecessary_underscores
-
-4 issues found.

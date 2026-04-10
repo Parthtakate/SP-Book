@@ -1,7 +1,0 @@
-[error] Undefined name 'anyCustomerChangeProvider' (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\services\downlink_sync_service.dart:45:16)
-[warning] Unused import: '../models/customer.dart' (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\services\migration_service.dart:3:8)
-[warning] The value of the field '_dateTimeFormat' isn't used (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\services\pdf_service.dart:19:16)
-[error] The named parameter 'amountInPaise' isn't defined (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\ui\customer\customer_details_screen.dart:259:19)
-[error] The named parameter 'amount' is required, but there's no corresponding argument (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\ui\customer\customer_details_screen.dart:257:54)
-[error] The named parameter 'amountInPaise' isn't defined (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\ui\transaction\add_transaction_screen.dart:108:11)
-[error] The named parameter 'amount' is required, but there's no corresponding argument (C:\Users\hp\.gemini\antigravity\scratch\khata_app\lib\ui\transaction\add_transaction_screen.dart:106:52)

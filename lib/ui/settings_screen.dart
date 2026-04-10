@@ -172,7 +172,32 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                       ? IconButton(
                           icon: const Icon(Icons.logout_rounded, color: Colors.white),
                           tooltip: 'Sign Out',
-                          onPressed: () => _signOut(),
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Sign Out'),
+                                content: const Text('Are you sure you want to sign out?\n\nYour data will be safely backed up to the cloud before you log out.'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('CANCEL'),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('SIGN OUT'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              _signOut();
+                            }
+                          },
                         )
                       : const SizedBox.shrink(),
                   loading: () => const SizedBox.shrink(),

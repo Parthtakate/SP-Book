@@ -24,7 +24,9 @@ final _deletedCustomersProvider = Provider.autoDispose<List<Customer>>((ref) {
 
 final _deletedTransactionsProvider = Provider.autoDispose<List<TransactionModel>>((ref) {
   final db = ref.watch(dbServiceProvider);
+  // Watch both so any restore/delete triggers a rebuild of this list
   ref.watch(customersProvider);
+  ref.watch(customerBalanceMapProvider);
   return db.getDeletedTransactions();
 });
 
@@ -69,17 +71,21 @@ class _RecycleBinScreenState extends ConsumerState<RecycleBinScreen>
   // ---- Customer actions ---------------------------------------------------
 
   Future<void> _restoreCustomer(String id, String name) async {
-    await ref.read(dbServiceProvider).restoreCustomer(id);
-    // Also restore all associated transactions for that customer
     final db = ref.read(dbServiceProvider);
+    // Restore customer
+    await db.restoreCustomer(id);
+    // Also restore all associated transactions for that customer
     final deletedTxns = db.getDeletedTransactions().where((t) => t.customerId == id).toList();
     for (final txn in deletedTxns) {
       await db.restoreTransaction(txn.id);
     }
+    // Invalidate all relevant providers so UI refreshes immediately
     ref.invalidate(customersProvider);
-    ref.invalidate(dashboardBalancesProvider);
     ref.invalidate(customerBalanceMapProvider);
-    if (mounted) _showSnack('$name restored successfully.', isSuccess: true);
+    ref.invalidate(dashboardBalancesProvider);
+    ref.invalidate(customerTransactionsProvider(id));
+    ref.invalidate(customerBalanceProvider(id));
+    if (mounted) _showSnack('$name and their transactions restored.', isSuccess: true);
   }
 
   Future<void> _permanentlyDeleteCustomer(String id, String name) async {
@@ -89,19 +95,29 @@ class _RecycleBinScreenState extends ConsumerState<RecycleBinScreen>
     );
     if (!confirmed) return;
     await ref.read(dbServiceProvider).permanentlyDeleteCustomer(id);
+    ref.invalidate(customerTransactionsProvider(id));
+    ref.invalidate(customerBalanceProvider(id));
     ref.invalidate(customersProvider);
-    ref.invalidate(dashboardBalancesProvider);
     ref.invalidate(customerBalanceMapProvider);
+    ref.invalidate(dashboardBalancesProvider);
     if (mounted) _showSnack('"$name" permanently deleted.');
   }
 
   // ---- Transaction actions ------------------------------------------------
 
   Future<void> _restoreTransaction(String id) async {
-    await ref.read(dbServiceProvider).restoreTransaction(id);
+    final db = ref.read(dbServiceProvider);
+    // Read customerId before restoring (still exists in box)
+    final txn = db.transactionsBox.get(id);
+    await db.restoreTransaction(id);
+    // Invalidate all relevant providers, including the specific customer's data
+    if (txn != null) {
+      ref.invalidate(customerTransactionsProvider(txn.customerId));
+      ref.invalidate(customerBalanceProvider(txn.customerId));
+    }
     ref.invalidate(customersProvider);
-    ref.invalidate(dashboardBalancesProvider);
     ref.invalidate(customerBalanceMapProvider);
+    ref.invalidate(dashboardBalancesProvider);
     if (mounted) _showSnack('Transaction restored.', isSuccess: true);
   }
 
@@ -111,10 +127,17 @@ class _RecycleBinScreenState extends ConsumerState<RecycleBinScreen>
       'The $amount transaction will be permanently removed. This cannot be undone.',
     );
     if (!confirmed) return;
-    await ref.read(dbServiceProvider).permanentlyDeleteTransaction(id);
+    final db = ref.read(dbServiceProvider);
+    // Read customerId before deleting (record disappears after)
+    final txn = db.transactionsBox.get(id);
+    await db.permanentlyDeleteTransaction(id);
+    if (txn != null) {
+      ref.invalidate(customerTransactionsProvider(txn.customerId));
+      ref.invalidate(customerBalanceProvider(txn.customerId));
+    }
     ref.invalidate(customersProvider);
-    ref.invalidate(dashboardBalancesProvider);
     ref.invalidate(customerBalanceMapProvider);
+    ref.invalidate(dashboardBalancesProvider);
     if (mounted) _showSnack('Transaction permanently deleted.');
   }
 
