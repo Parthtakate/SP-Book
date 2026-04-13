@@ -165,7 +165,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             _fabLabels[_currentTabIndex],
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          backgroundColor: const Color(0xFF005CEE),
+          backgroundColor: const Color(0xFF045CC5), // Khatabook-style deep blue
           foregroundColor: Colors.white,
           elevation: 4,
         ),
@@ -189,7 +189,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
       ),
       title: const _KhatabookSelectorButton(), // ← replaces static 'SPBOOKS' text
-      backgroundColor: const Color(0xFF005CEE),
+      backgroundColor: const Color(0xFF045CC5), // Khatabook-style deep blue
       foregroundColor: Colors.white,
       elevation: 0,
       actions: [
@@ -218,9 +218,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           fontSize: 13,
         ),
         tabs: const [
-          Tab(icon: Icon(Icons.people, size: 18), text: 'Customer'),
-          Tab(icon: Icon(Icons.store, size: 18), text: 'Supplier'),
-          Tab(icon: Icon(Icons.badge, size: 18), text: 'Staff'),
+          Tab(icon: Icon(Icons.people, size: 18), text: 'CUSTOMERS'),
+          Tab(icon: Icon(Icons.store, size: 18), text: 'SUPPLIERS'),
+          Tab(icon: Icon(Icons.badge, size: 18), text: 'STAFF'),
         ],
       ),
     );
@@ -597,137 +597,131 @@ class _DashboardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Darken accent slightly for gradient end
-    final gradientEnd = HSLColor.fromColor(accentColor)
-        .withLightness(
-            (HSLColor.fromColor(accentColor).lightness + 0.12).clamp(0.0, 1.0))
-        .toColor();
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [accentColor, gradientEnd],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return Stack(
+      children: [
+        // This container extends the blue header color downwards slightly behind the white card
+        Container(
+          height: 40,
+          color: const Color(0xFF045CC5),
         ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: accentColor.withValues(alpha: 0.35),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+        Container(
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.withValues(alpha: 0.1)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Balance Summary',
-              style: TextStyle(
-                  color: Colors.white70, fontSize: 12, letterSpacing: 0.5),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: _BalanceColumn(
-                    label: payLabel,
-                    amount: toPay,
-                    color: const Color(0xFFFF8A80),
-                    icon: Icons.arrow_upward_rounded,
-                  ),
+          child: Column(
+            children: [
+              // Top Section: Balances
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            payLabel,
+                            style: const TextStyle(
+                              color: Color(0xFF5F6368),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _currency.format(toPay),
+                            style: const TextStyle(
+                              color: Color(0xFF0F9D58), // Green for 'You will give' (or whatever they owe)
+                              fontWeight: FontWeight.bold,
+                              fontSize: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: 48,
+                      color: Colors.grey.withValues(alpha: 0.3),
+                    ),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            receiveLabel,
+                            style: const TextStyle(
+                              color: Color(0xFF5F6368),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _currency.format(toReceive),
+                            style: const TextStyle(
+                              color: Color(0xFFD50000), // Red for 'You will get' 
+                              fontWeight: FontWeight.bold,
+                              fontSize: 20,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                Container(
-                  width: 1,
-                  height: 48,
-                  color: Colors.white24,
-                  margin: const EdgeInsets.symmetric(horizontal: 16),
+              ),
+              
+              // Bottom Section: View Reports
+              InkWell(
+                onTap: onViewReports,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(12),
+                  bottomRight: Radius.circular(12),
                 ),
-                Expanded(
-                  child: _BalanceColumn(
-                    label: receiveLabel,
-                    amount: toReceive,
-                    color: const Color(0xFF69F0AE),
-                    icon: Icons.arrow_downward_rounded,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Divider(color: Colors.white24, height: 1),
-            const SizedBox(height: 10),
-            GestureDetector(
-              onTap: onViewReports,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.bar_chart_rounded, color: Colors.white70, size: 16),
-                  SizedBox(width: 6),
-                  Text(
-                    'View Full Reports',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FA),
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                    border: Border(
+                      top: BorderSide(color: Colors.grey.withValues(alpha: 0.2)),
                     ),
                   ),
-                  SizedBox(width: 4),
-                  Icon(Icons.chevron_right, color: Colors.white70, size: 16),
-                ],
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.picture_as_pdf_outlined,
+                        color: Color(0xFF045CC5),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'View Reports',
+                        style: TextStyle(
+                          color: Color(0xFF045CC5),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BalanceColumn extends StatelessWidget {
-  final String label;
-  final double amount;
-  final Color color;
-  final IconData icon;
-
-  const _BalanceColumn({
-    required this.label,
-    required this.amount,
-    required this.color,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _currency.format(amount),
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
+            ],
           ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
         ),
       ],
     );

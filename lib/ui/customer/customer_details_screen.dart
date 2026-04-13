@@ -10,6 +10,7 @@ import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
 import '../reminder/set_reminder_screen.dart';
 import '../transaction/add_transaction_screen.dart';
+import '../transaction/entry_details_screen.dart';
 import 'contact_ledger_screen.dart';
 import 'edit_customer_screen.dart';
 import '../../services/pdf_service.dart';
@@ -438,10 +439,10 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => AddTransactionScreen(
+                                builder: (_) => EntryDetailsScreen(
                                   customer: widget.customer,
-                                  isGot: t.isGot,
-                                  existingTransaction: t,
+                                  transaction: t,
+                                  allTransactions: transactions,
                                 ),
                               ),
                             );
