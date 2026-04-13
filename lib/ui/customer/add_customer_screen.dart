@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../../models/customer.dart';
 import '../../providers/customer_provider.dart';
 
 class AddCustomerScreen extends ConsumerStatefulWidget {
-  const AddCustomerScreen({super.key});
+  final ContactType contactType;
+  const AddCustomerScreen({super.key, this.contactType = ContactType.customer});
 
   @override
   ConsumerState<AddCustomerScreen> createState() => _AddCustomerScreenState();
@@ -129,7 +131,11 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
       final name = _nameController.text.trim();
       final phone = _phoneController.text.trim();
 
-      await ref.read(customersProvider.notifier).addCustomer(name, phone);
+      await ref.read(customersProvider.notifier).addCustomer(
+            name,
+            phone,
+            contactType: widget.contactType,
+          );
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -143,13 +149,46 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
     }
   }
 
+  // ── Per-type helpers ─────────────────────────────────────────────────────
+  String get _title {
+    switch (widget.contactType) {
+      case ContactType.customer: return 'Add New Customer';
+      case ContactType.supplier: return 'Add New Supplier';
+      case ContactType.staff:    return 'Add Staff Member';
+    }
+  }
+
+  String get _sectionLabel {
+    switch (widget.contactType) {
+      case ContactType.customer: return 'Customer Details';
+      case ContactType.supplier: return 'Supplier Details';
+      case ContactType.staff:    return 'Staff Details';
+    }
+  }
+
+  Color get _accent {
+    switch (widget.contactType) {
+      case ContactType.customer: return const Color(0xFF005CEE);
+      case ContactType.supplier: return const Color(0xFFE65100);
+      case ContactType.staff:    return const Color(0xFF6A1B9A);
+    }
+  }
+
+  IconData get _topIcon {
+    switch (widget.contactType) {
+      case ContactType.customer: return Icons.person_add_rounded;
+      case ContactType.supplier: return Icons.store_rounded;
+      case ContactType.staff:    return Icons.badge_rounded;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: const Text('Add New Customer',
-            style: TextStyle(
+        title: Text(_title,
+            style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 20,
                 letterSpacing: -0.5)),
@@ -183,13 +222,13 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                           width: 88,
                           height: 88,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF005CEE).withValues(alpha: 0.08),
+                            color: _accent.withValues(alpha: 0.08),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
-                            Icons.person_add_rounded,
+                          child: Icon(
+                            _topIcon,
                             size: 44,
-                            color: Color(0xFF005CEE),
+                            color: _accent,
                           ),
                         ),
                       ),
@@ -205,7 +244,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                           child: Container(
                             padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
                             decoration: BoxDecoration(
-                              border: Border.all(color: const Color(0xFF005CEE).withValues(alpha: 0.3), width: 1.5),
+                              border: Border.all(color: _accent.withValues(alpha: 0.3), width: 1.5),
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Row(
@@ -216,12 +255,12 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                                         width: 20,
                                         height: 20,
                                         child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF005CEE)))
-                                    : const Icon(Icons.contacts_rounded, color: Color(0xFF005CEE), size: 22),
+                                    : const Icon(Icons.contacts_rounded, color: Colors.grey, size: 22),
                                 const SizedBox(width: 12),
                                 Text(
                                   _isImporting ? 'Loading Contacts...' : 'Import from Contacts',
-                                  style: const TextStyle(
-                                    color: Color(0xFF005CEE),
+                                  style: TextStyle(
+                                    color: _accent,
                                     fontWeight: FontWeight.w600,
                                     fontSize: 16,
                                   ),
@@ -267,7 +306,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Customer Details',
+                            Text(_sectionLabel,
                                 style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 16,
@@ -289,7 +328,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(color: Color(0xFF005CEE), width: 1.5),
+                                  borderSide: BorderSide(color: _accent, width: 1.5),
                                 ),
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                                 prefixIcon: const Icon(Icons.person_outline_rounded, color: Colors.grey),
@@ -321,7 +360,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(color: Color(0xFF005CEE), width: 1.5),
+                                  borderSide: BorderSide(color: _accent, width: 1.5),
                                 ),
                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
                                 prefixIcon: const Icon(Icons.phone_outlined, color: Colors.grey),
@@ -367,7 +406,7 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: const Color(0xFF005CEE),
+                  backgroundColor: _accent,
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16)),
@@ -375,9 +414,10 @@ class _AddCustomerScreenState extends ConsumerState<AddCustomerScreen> {
                   minimumSize: const Size(double.infinity, 56),
                 ),
                 onPressed: _saveCustomer,
-                child: const Text('SAVE CUSTOMER',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                child: Text(
+                  'SAVE ${widget.contactType.name.toUpperCase()}',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                ),
               ),
             ),
           ],

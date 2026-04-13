@@ -24,7 +24,11 @@ service cloud.firestore {
           || (request.resource.data.phone is string && request.resource.data.phone.size() <= 20)
         )
         // updatedAt is written by the client as serverTimestamp()
-        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp);
+        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp)
+        // isDeleted must be a boolean if present
+        && (request.resource.data.get('isDeleted', null) == null || request.resource.data.isDeleted is bool)
+        // contactType must be one of the enum string values if present
+        && (request.resource.data.get('contactType', null) == null || request.resource.data.contactType in ['customer', 'supplier', 'staff']);
 
       allow delete: if isOwner(userId);
     }

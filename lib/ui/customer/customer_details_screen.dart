@@ -4,12 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../../models/customer.dart';
 import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
 import '../reminder/set_reminder_screen.dart';
-import '../reports/reports_screen.dart';
 import '../transaction/add_transaction_screen.dart';
+import 'contact_ledger_screen.dart';
 import 'edit_customer_screen.dart';
 import '../../services/pdf_service.dart';
 import '../../services/safe_text.dart';
@@ -53,17 +54,22 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
           alignment: Alignment.center,
           children: [
             InteractiveViewer(
-              child: Image.file(
-                File(imagePath),
-                fit: BoxFit.contain,
-                width: double.infinity,
-                height: double.infinity,
-                errorBuilder: (context, error, stackTrace) =>
-                    const Center(
-                  child: Icon(Icons.broken_image_outlined,
-                      size: 64, color: Colors.white54),
-                ),
-              ),
+              child: File(imagePath).existsSync()
+                  ? Image.file(
+                      File(imagePath),
+                      fit: BoxFit.contain,
+                      width: double.infinity,
+                      height: double.infinity,
+                      errorBuilder: (context, error, stackTrace) =>
+                          const Center(
+                        child: Icon(Icons.broken_image_outlined,
+                            size: 64, color: Colors.white54),
+                      ),
+                    )
+                  : const Center(
+                      child: Icon(Icons.broken_image_outlined,
+                          size: 64, color: Colors.white54),
+                    ),
             ),
             Positioned(
               top: 40,
@@ -180,7 +186,12 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
           'statement attached. Pending balance: '
           '${_currency.format(balancePaise.abs() / 100.0)}. Please clear it soon.';
       // ignore: deprecated_member_use
-      await Share.shareXFiles([XFile(filePath)], text: msg);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(filePath)],
+          text: msg,
+        ),
+      );
     } catch (e) {
       if (context.mounted) {
         _showSnack(context, 'Could not generate PDF. Try again.');
@@ -246,11 +257,19 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
 
     final bool owesYou = balance > 0;
     final bool youOwe = balance < 0;
-    final String balanceStatus = owesYou
-        ? 'You will get'
-        : youOwe
-            ? 'You will give'
-            : 'Settled Up';
+    
+    final String balanceStatus;
+    switch (widget.customer.contactType) {
+      case ContactType.staff:
+        balanceStatus = owesYou ? 'Salary Due' : youOwe ? 'Advance Given' : 'Settled Up';
+        break;
+      case ContactType.supplier:
+        balanceStatus = owesYou ? 'You will receive' : youOwe ? 'You will pay' : 'Settled Up';
+        break;
+      case ContactType.customer:
+        balanceStatus = owesYou ? 'You will get' : youOwe ? 'You will give' : 'Settled Up';
+        break;
+    }
     final Color headerColor =
         owesYou ? const Color(0xFF2E7D32) : youOwe ? const Color(0xFFC62828) : Colors.grey;
 
@@ -327,7 +346,14 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
             ),
             onReport: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const ReportsScreen()),
+              MaterialPageRoute(
+                builder: (_) => ContactLedgerScreen(
+                  customer: widget.customer,
+                  transactions: transactions,
+                  balancePaise: balance,
+                  initialDateRange: _filterRange,
+                ),
+              ),
             ),
             onExportPdf: () async {
               try {
@@ -339,7 +365,8 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                   balance: balance / 100.0,
                   dateRange: _filterRange,
                 );
-              } catch (e) {
+              } catch (e, st) {
+                debugPrint('onExportPdf error: $e\n$st');
                 if (context.mounted) {
                   _showSnack(context, 'Error generating PDF. Please try again.');
                 }
@@ -352,7 +379,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                 context: context,
                 builder: (ctx) => AlertDialog(
                   title: const Text('Settle Balance?'),
-                  content: Text('This will add a ${balance > 0 ? "You Got" : "You Gave"} transaction of ${_currency.format(balance.abs() / 100.0)} to bring the balance to ₹0.'),
+                  content: Text('This will add a ${balance > 0 ? (widget.customer.contactType == ContactType.staff ? "Salary Paid" : "You Got") : (widget.customer.contactType == ContactType.staff ? "Advance Paid" : "You Gave")} transaction of ${_currency.format(balance.abs() / 100.0)} to bring the balance to ₹0.'),
                   actions: [
                     TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('CANCEL')),
                     ElevatedButton(
@@ -514,10 +541,10 @@ class _GradientHeader extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  // Phase 4: Edit customer button
+                  // Phase 4: Edit contact button
                   IconButton(
                     icon: const Icon(Icons.edit_outlined, color: Colors.white),
-                    tooltip: 'Edit Customer',
+                    tooltip: 'Edit Contact',
                     onPressed: onEdit,
                   ),
                   if (isFiltered)
@@ -893,24 +920,35 @@ class _TransactionCard extends StatelessWidget {
                       onTap: onImageTap,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(6),
-                        child: Image.file(
-                          File(t.imagePath!),
-                          width: 36,
-                          height: 36,
-                          fit: BoxFit.cover,
-                          cacheWidth: 108,
-                          errorBuilder: (context, error, stackTrace) =>
-                              Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Icon(Icons.broken_image_outlined,
-                                size: 18, color: Colors.grey.shade400),
-                          ),
-                        ),
+                        child: File(t.imagePath!).existsSync()
+                            ? Image.file(
+                                File(t.imagePath!),
+                                width: 36,
+                                height: 36,
+                                fit: BoxFit.cover,
+                                cacheWidth: 108,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Icon(Icons.broken_image_outlined,
+                                      size: 18, color: Colors.grey.shade400),
+                                ),
+                              )
+                            : Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Icon(Icons.broken_image_outlined,
+                                    size: 18, color: Colors.grey.shade400),
+                              ),
                       ),
                     ),
                 ],
@@ -968,6 +1006,22 @@ class _BottomActionBar extends StatelessWidget {
   final Customer customer;
   const _BottomActionBar({required this.customer});
 
+  String get _gaveLabel {
+    switch (customer.contactType) {
+      case ContactType.staff:    return 'GIVE ADVANCE';
+      case ContactType.supplier: return 'YOU PAID';
+      case ContactType.customer: return 'YOU GAVE';
+    }
+  }
+
+  String get _gotLabel {
+    switch (customer.contactType) {
+      case ContactType.staff:    return 'PAY SALARY';
+      case ContactType.supplier: return 'YOU RECEIVED';
+      case ContactType.customer: return 'YOU GOT';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -989,7 +1043,7 @@ class _BottomActionBar extends StatelessWidget {
             children: [
               Expanded(
                 child: _BottomButton(
-                  label: 'YOU GAVE',
+                  label: _gaveLabel,
                   icon: Icons.arrow_upward_rounded,
                   color: const Color(0xFFC62828),
                   onTap: () => Navigator.push(
@@ -1004,7 +1058,7 @@ class _BottomActionBar extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: _BottomButton(
-                  label: 'YOU GOT',
+                  label: _gotLabel,
                   icon: Icons.arrow_downward_rounded,
                   color: const Color(0xFF2E7D32),
                   onTap: () => Navigator.push(

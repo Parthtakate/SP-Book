@@ -603,11 +603,17 @@ class PdfService {
       businessName: businessName,
       businessPhone: businessPhone,
     );
-    // ignore: deprecated_member_use
-    await Share.shareXFiles(
-      [XFile(filePath)],
-      text: 'Ledger Statement for ${customer.name}',
-    );
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(filePath)],
+          text: 'Ledger Statement for ${customer.name}',
+        ),
+      );
+    } catch (e, st) {
+      debugPrint('PdfService.generateAndShareCustomerStatement share error: $e\n$st');
+      rethrow;
+    }
   }
 
   /// Generates the customer PDF in Khatabook style.
@@ -707,19 +713,6 @@ class PdfService {
                     ],
                   ),
 
-                  pw.SizedBox(height: 40),
-
-                  // ── Page Number ──
-                  pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.end,
-                    children: [
-                      pw.Text(
-                        'Page ${context.pageNumber} of ${context.pagesCount}',
-                        style: const pw.TextStyle(fontSize: _PdfTheme.smallSize, color: _PdfTheme.labelGrey),
-                      ),
-                    ],
-                  ),
-                  pw.SizedBox(height: 8),
                 ],
               ),
             ),

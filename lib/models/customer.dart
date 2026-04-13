@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 
+/// Matches Khatabook's three contact categories.
+enum ContactType { customer, supplier, staff }
+
 class Customer {
   final String id;
   final String name;
@@ -8,6 +11,7 @@ class Customer {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final bool isDeleted;
+  final ContactType contactType;
 
   const Customer({
     required this.id,
@@ -16,6 +20,7 @@ class Customer {
     required this.createdAt,
     this.updatedAt,
     this.isDeleted = false,
+    this.contactType = ContactType.customer,
   });
 
   Customer copyWith({
@@ -23,6 +28,7 @@ class Customer {
     String? phone,
     DateTime? updatedAt,
     bool? isDeleted,
+    ContactType? contactType,
   }) {
     return Customer(
       id: id,
@@ -31,6 +37,7 @@ class Customer {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       isDeleted: isDeleted ?? this.isDeleted,
+      contactType: contactType ?? this.contactType,
     );
   }
 
@@ -39,10 +46,10 @@ class Customer {
     'name': name,
     'phone': phone,
     // Use the actual stored createdAt date — NOT serverTimestamp().
-    // serverTimestamp() would reset it to NOW on every backup, destroying the original creation date.
     'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': FieldValue.serverTimestamp(),
     'isDeleted': isDeleted,
+    'contactType': contactType.name,
   };
 
   factory Customer.fromFirestore(Map<String, dynamic> data) => Customer(
@@ -50,26 +57,64 @@ class Customer {
     name: data['name'] as String,
     phone: data['phone'] as String?,
     createdAt: (data['createdAt'] as Timestamp).toDate(),
-    updatedAt: data['updatedAt'] != null ? (data['updatedAt'] as Timestamp).toDate() : null,
+    updatedAt: data['updatedAt'] != null
+        ? (data['updatedAt'] as Timestamp).toDate()
+        : null,
     isDeleted: data['isDeleted'] as bool? ?? false,
+    contactType: _parseContactType(data['contactType'] as String?),
   );
+
+  /// Safe parser — old Firestore docs without 'contactType' default to customer.
+  static ContactType _parseContactType(String? raw) {
+    if (raw == null) return ContactType.customer;
+    try {
+      return ContactType.values.byName(raw);
+    } catch (_) {
+      return ContactType.customer;
+    }
+  }
 }
 
 class CustomerAdapter extends TypeAdapter<Customer> {
   @override
-  final int typeId = 0;
+  final int typeId = 0; // Unchanged — no migration needed, we append the field.
 
   @override
   Customer read(BinaryReader reader) {
+    final id = reader.readString();
+    final name = reader.readString();
+    final phone = reader.read();
+    final createdAt = DateTime.fromMillisecondsSinceEpoch(reader.readInt());
+    final hasUpdatedAt = reader.readBool();
+    final updatedAt = hasUpdatedAt
+        ? DateTime.fromMillisecondsSinceEpoch(reader.readInt())
+        : null;
+    // isDeleted was also appended — same try/catch safety pattern.
+    final isDeleted = () {
+      try {
+        return reader.readBool();
+      } catch (_) {
+        return false;
+      }
+    }();
+    // contactType is the newest field — old records won't have these bytes.
+    // The try/catch gracefully defaults old records to ContactType.customer.
+    final contactType = () {
+      try {
+        final raw = reader.readString();
+        return ContactType.values.byName(raw);
+      } catch (_) {
+        return ContactType.customer;
+      }
+    }();
     return Customer(
-      id: reader.readString(),
-      name: reader.readString(),
-      phone: reader.read(),
-      createdAt: DateTime.fromMillisecondsSinceEpoch(reader.readInt()),
-      updatedAt: reader.readBool() ? DateTime.fromMillisecondsSinceEpoch(reader.readInt()) : null,
-      isDeleted: () {
-        try { return reader.readBool(); } catch (_) { return false; }
-      }(),
+      id: id,
+      name: name,
+      phone: phone,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      isDeleted: isDeleted,
+      contactType: contactType,
     );
   }
 
@@ -84,5 +129,6 @@ class CustomerAdapter extends TypeAdapter<Customer> {
       writer.writeInt(obj.updatedAt!.millisecondsSinceEpoch);
     }
     writer.writeBool(obj.isDeleted);
+    writer.writeString(obj.contactType.name); // Appended last — backward compat
   }
 }

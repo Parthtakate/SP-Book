@@ -219,7 +219,14 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
-                        child: Image.file(_selectedImage!, fit: BoxFit.cover),
+                        child: _selectedImage!.existsSync()
+                            ? Image.file(_selectedImage!, fit: BoxFit.cover)
+                            : Container(
+                                color: Colors.grey.shade200,
+                                child: const Center(
+                                  child: Icon(Icons.broken_image_outlined, color: Colors.grey),
+                                ),
+                              ),
                       ),
                     ),
                     Positioned(

@@ -19,6 +19,10 @@ import '../services/safe_text.dart';
 final _currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
 final _relativeDate = DateFormat('d MMM');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HomeScreen — Tabbed (Customer / Supplier / Staff)
+// ─────────────────────────────────────────────────────────────────────────────
+
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -27,15 +31,31 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen>
-    with SingleTickerProviderStateMixin {
-  final TextEditingController _searchController = TextEditingController();
-  Timer? _debounce;
+    with TickerProviderStateMixin {
+  late final TabController _tabController;
   late final AnimationController _fabAnimController;
   late final Animation<double> _fabScaleAnimation;
+
+  static const List<ContactType> _types = [
+    ContactType.customer,
+    ContactType.supplier,
+    ContactType.staff,
+  ];
+  static const List<String> _fabLabels = [
+    'Add Customer',
+    'Add Supplier',
+    'Add Staff',
+  ];
+
+  int _currentTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
+
+    _tabController = TabController(length: 3, vsync: this);
+    _tabController.addListener(_onTabChanged);
+
     _fabAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -44,103 +64,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       parent: _fabAnimController,
       curve: Curves.elasticOut,
     );
-    // Delay the FAB entrance for a polished feel
     Future.delayed(const Duration(milliseconds: 400), () {
       if (mounted) _fabAnimController.forward();
     });
+  }
 
-    Future.microtask(() async {
-      // Background sync triggers removed for architectural simplification.
-    });
+  void _onTabChanged() {
+    if (!_tabController.indexIsChanging &&
+        _tabController.index != _currentTabIndex) {
+      setState(() => _currentTabIndex = _tabController.index);
+    }
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _searchController.dispose();
+    _tabController.removeListener(_onTabChanged);
+    _tabController.dispose();
     _fabAnimController.dispose();
     super.dispose();
   }
 
-  void _onSearch(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () {
-      ref.read(searchQueryProvider.notifier).updateQuery(value);
-    });
-  }
-
-  void _tryDeleteCustomer(
-      BuildContext context, WidgetRef ref, String customerId, String name) {
-    final balanceMap = ref.read(customerBalanceMapProvider);
-    final balancePaise = balanceMap[customerId] ?? 0;
-
-    if (balancePaise != 0) {
-      // Unsettled account — show blocking sheet
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _UnsettledDeleteSheet(
-          name: name,
-          balancePaise: balancePaise,
-          onViewAccount: () {
-            Navigator.pop(context);
-          },
-        ),
-      );
-    } else {
-      // Settled — show normal confirm dialog
-      _showDeleteConfirmation(context, ref, customerId, name);
-    }
-  }
-
-  void _showDeleteConfirmation(
-      BuildContext context, WidgetRef ref, String customerId, String name) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete Customer?', style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Text(
-          'Delete "${safeText(name, fallback: 'this customer')}" and all their transactions? This cannot be undone.',
-          style: const TextStyle(color: Colors.black54),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            onPressed: () {
-              ref.read(customersProvider.notifier).deleteCustomer(customerId);
-              Navigator.pop(context);
-            },
-            child: const Text('DELETE'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    // Keep auto-sync alive
+    // Keep AutoSync alive while HomeScreen is mounted
     final syncState = ref.watch(autoSyncProvider);
-
-    final balances = ref.watch(dashboardBalancesProvider);
-    final filteredCustomers = ref.watch(filteredCustomersProvider);
-    final allCustomers = ref.watch(customersProvider);
-
     final db = ref.watch(dbServiceProvider);
+    final allCustomers = ref.watch(customersProvider);
     final isRestoring = ref.watch(isRestoringProvider);
+    final isGuest = FirebaseAuth.instance.currentUser == null ||
+        FirebaseAuth.instance.currentUser!.isAnonymous;
+
     final isEmpty = allCustomers.isEmpty && db.transactionsBox.isEmpty;
-    final isGuest = FirebaseAuth.instance.currentUser == null || FirebaseAuth.instance.currentUser!.isAnonymous;
 
     if (isEmpty && isRestoring && !isGuest) {
       return Scaffold(
@@ -152,7 +106,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               CircularProgressIndicator(color: Color(0xFF005CEE)),
               SizedBox(height: 18),
               Text(
-                "Setting up your account...",
+                'Setting up your account...',
                 style: TextStyle(
                   color: Colors.black54,
                   fontSize: 15,
@@ -168,25 +122,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: _buildAppBar(context),
-      floatingActionButton: ScaleTransition(
-        scale: _fabScaleAnimation,
-        child: FloatingActionButton.extended(
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddCustomerScreen()),
-            );
-          },
-          icon: const Icon(Icons.person_add_alt_1),
-          label: const Text('Add Customer', style: TextStyle(fontWeight: FontWeight.bold)),
-          backgroundColor: const Color(0xFF005CEE),
-          foregroundColor: Colors.white,
-          elevation: 4,
-        ),
-      ),
       body: Column(
         children: [
-          // Sync status banner
+          // Sync status banner — sits above the tab pages
           _SyncStatusBanner(
             status: syncState.status,
             isRestoring: isRestoring,
@@ -196,84 +134,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             },
           ),
 
-          // Dashboard Card
-          _DashboardCard(
-            toReceive: balances['toReceive'] ?? 0,
-            toPay: balances['toPay'] ?? 0,
-            onViewReports: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ReportsScreen()),
-            ),
-          ),
-
-          // Search + filter bar
-          _SearchAndFilterBar(
-            controller: _searchController,
-            currentFilter: ref.watch(filterModeProvider),
-            onSearch: _onSearch,
-            onFilter: (mode) =>
-                ref.read(filterModeProvider.notifier).setFilter(mode),
-          ),
-
-          // Legend header
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Your Customers',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '${filteredCustomers.length} shown',
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                ),
+          // Three fully-separate tab pages
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: const [
+                _ContactTypePage(type: ContactType.customer),
+                _ContactTypePage(type: ContactType.supplier),
+                _ContactTypePage(type: ContactType.staff),
               ],
             ),
           ),
-
-          // Customer list
-          Expanded(
-            child: filteredCustomers.isEmpty
-                ? _EmptyState(
-                    hasCustomers: allCustomers.isNotEmpty,
-                    onAddCustomer: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const AddCustomerScreen()),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
-                    itemCount: filteredCustomers.length,
-                    itemBuilder: (context, index) {
-                      final customer = filteredCustomers[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _CustomerListCard(
-                          customer: customer,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  CustomerDetailsScreen(customer: customer),
-                            ),
-                          ),
-                          onLongPress: () => _tryDeleteCustomer(
-                            context,
-                            ref,
-                            customer.id,
-                            customer.name,
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
         ],
+      ),
+      floatingActionButton: ScaleTransition(
+        scale: _fabScaleAnimation,
+        child: FloatingActionButton.extended(
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AddCustomerScreen(
+                contactType: _types[_currentTabIndex],
+              ),
+            ),
+          ),
+          icon: const Icon(Icons.person_add_alt_1),
+          label: Text(
+            _fabLabels[_currentTabIndex],
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: const Color(0xFF005CEE),
+          foregroundColor: Colors.white,
+          elevation: 4,
+        ),
       ),
     );
   }
@@ -311,39 +204,369 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
         ),
       ],
+      // ── Khatabook-style tab bar ──
+      bottom: TabBar(
+        controller: _tabController,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white60,
+        indicatorColor: Colors.white,
+        indicatorWeight: 3,
+        labelStyle: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.normal,
+          fontSize: 13,
+        ),
+        tabs: const [
+          Tab(icon: Icon(Icons.people, size: 18), text: 'Customer'),
+          Tab(icon: Icon(Icons.store, size: 18), text: 'Supplier'),
+          Tab(icon: Icon(Icons.badge, size: 18), text: 'Staff'),
+        ],
+      ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard Card
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Separate page for each contact type
+// AutomaticKeepAliveClientMixin preserves scroll & search when switching tabs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ContactTypePage extends ConsumerStatefulWidget {
+  final ContactType type;
+  const _ContactTypePage({required this.type});
+
+  @override
+  ConsumerState<_ContactTypePage> createState() => _ContactTypePageState();
+}
+
+class _ContactTypePageState extends ConsumerState<_ContactTypePage>
+    with AutomaticKeepAliveClientMixin {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  FilterMode _filterMode = FilterMode.all;
+  Timer? _debounce;
+
+  @override
+  bool get wantKeepAlive => true; // Preserve state when switching tabs
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearch(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _searchQuery = value.toLowerCase().trim());
+    });
+  }
+
+  void _tryDeleteCustomer(String customerId, String name) {
+    final balanceMap = ref.read(customerBalanceMapProvider);
+    final balancePaise = balanceMap[customerId] ?? 0;
+
+    if (balancePaise != 0) {
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => _UnsettledDeleteSheet(
+          name: name,
+          balancePaise: balancePaise,
+          onViewAccount: () => Navigator.pop(context),
+        ),
+      );
+    } else {
+      _showDeleteConfirmation(customerId, name);
+    }
+  }
+
+  void _showDeleteConfirmation(String customerId, String name) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Delete $_typeLabel?',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          'Delete "${safeText(name, fallback: 'this contact')}" and all their '
+          'transactions? This cannot be undone.',
+          style: const TextStyle(color: Colors.black54),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              ref.read(customersProvider.notifier).deleteCustomer(customerId);
+              Navigator.pop(context);
+            },
+            child: const Text('DELETE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Per-type display strings ─────────────────────────────────────────────
+
+  String get _typeLabel {
+    switch (widget.type) {
+      case ContactType.customer:
+        return 'Customer';
+      case ContactType.supplier:
+        return 'Supplier';
+      case ContactType.staff:
+        return 'Staff Member';
+    }
+  }
+
+  String get _pageTitle {
+    switch (widget.type) {
+      case ContactType.customer:
+        return 'Your Customers';
+      case ContactType.supplier:
+        return 'Your Suppliers';
+      case ContactType.staff:
+        return 'Your Staff';
+    }
+  }
+
+  String get _emptyTitle {
+    switch (widget.type) {
+      case ContactType.customer:
+        return 'No customers yet';
+      case ContactType.supplier:
+        return 'No suppliers yet';
+      case ContactType.staff:
+        return 'No staff members yet';
+    }
+  }
+
+  String get _searchHint {
+    switch (widget.type) {
+      case ContactType.customer:
+        return 'Search customers…';
+      case ContactType.supplier:
+        return 'Search suppliers…';
+      case ContactType.staff:
+        return 'Search staff…';
+    }
+  }
+
+  /// Returns (payLabel, receiveLabel) for the mini dashboard card.
+  (String, String) get _dashLabels {
+    switch (widget.type) {
+      case ContactType.customer:
+        return ('You will give', 'You will get');
+      case ContactType.supplier:
+        return ('You will pay', 'You will receive');
+      case ContactType.staff:
+        return ('Advance Given', 'Salary Due');
+    }
+  }
+
+  Color get _typeAccent {
+    switch (widget.type) {
+      case ContactType.customer:
+        return const Color(0xFF005CEE);
+      case ContactType.supplier:
+        return const Color(0xFFE65100);
+      case ContactType.staff:
+        return const Color(0xFF6A1B9A);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+
+    final allCustomers = ref.watch(customersProvider);
+    final balanceMap = ref.watch(customerBalanceMapProvider);
+
+    // ── Filter by type first ─────────────────────────────────────────────
+    var typeContacts = allCustomers
+        .where((c) => c.contactType == widget.type)
+        .toList();
+
+    // ── Apply search ─────────────────────────────────────────────────────
+    var filteredList = _searchQuery.isEmpty
+        ? typeContacts
+        : typeContacts.where((c) {
+            return c.name.toLowerCase().contains(_searchQuery) ||
+                (c.phone?.toLowerCase().contains(_searchQuery) ?? false);
+          }).toList();
+
+    // ── Apply balance filter ─────────────────────────────────────────────
+    if (_filterMode != FilterMode.all) {
+      filteredList = filteredList.where((c) {
+        final balance = balanceMap[c.id] ?? 0;
+        if (_filterMode == FilterMode.toReceive) return balance > 0;
+        if (_filterMode == FilterMode.toPay) return balance < 0;
+        return true;
+      }).toList();
+    }
+
+    // ── Compute type-specific totals for the mini dashboard ──────────────
+    double toReceive = 0;
+    double toPay = 0;
+    for (final c in typeContacts) {
+      final balance = balanceMap[c.id] ?? 0;
+      if (balance > 0) {
+        toReceive += balance / 100.0;
+      } else if (balance < 0) {
+        toPay += balance.abs() / 100.0;
+      }
+    }
+
+    final (payLabel, receiveLabel) = _dashLabels;
+
+    return Column(
+      children: [
+        // ── Mini dashboard card (type-specific) ──────────────────────────
+        _DashboardCard(
+          toReceive: toReceive,
+          toPay: toPay,
+          receiveLabel: receiveLabel,
+          payLabel: payLabel,
+          accentColor: _typeAccent,
+          onViewReports: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ReportsScreen(filterType: widget.type),
+            ),
+          ),
+        ),
+
+        // ── Search + filter ───────────────────────────────────────────────
+        _SearchAndFilterBar(
+          controller: _searchController,
+          hint: _searchHint,
+          currentFilter: _filterMode,
+          onSearch: _onSearch,
+          onFilter: (mode) => setState(() => _filterMode = mode),
+        ),
+
+        // ── List header ───────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _pageTitle,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              Text(
+                '${filteredList.length} shown',
+                style: const TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+
+        // ── Contact list ──────────────────────────────────────────────────
+        Expanded(
+          child: filteredList.isEmpty
+              ? _EmptyState(
+                  hasItems: typeContacts.isNotEmpty,
+                  emptyTitle: _emptyTitle,
+                  addLabel: 'Add $_typeLabel',
+                  typeAccent: _typeAccent,
+                  onAdd: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          AddCustomerScreen(contactType: widget.type),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
+                  itemCount: filteredList.length,
+                  itemBuilder: (context, index) {
+                    final customer = filteredList[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _CustomerListCard(
+                        customer: customer,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                CustomerDetailsScreen(customer: customer),
+                          ),
+                        ),
+                        onLongPress: () =>
+                            _tryDeleteCustomer(customer.id, customer.name),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard Card (type-aware labels + accent color)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _DashboardCard extends StatelessWidget {
   final double toReceive;
   final double toPay;
+  final String receiveLabel;
+  final String payLabel;
+  final Color accentColor;
   final VoidCallback onViewReports;
 
   const _DashboardCard({
     required this.toReceive,
     required this.toPay,
+    required this.receiveLabel,
+    required this.payLabel,
+    required this.accentColor,
     required this.onViewReports,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Darken accent slightly for gradient end
+    final gradientEnd = HSLColor.fromColor(accentColor)
+        .withLightness(
+            (HSLColor.fromColor(accentColor).lightness + 0.12).clamp(0.0, 1.0))
+        .toColor();
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF005CEE), Color(0xFF1A7CFF)],
+        gradient: LinearGradient(
+          colors: [accentColor, gradientEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF005CEE).withValues(alpha: 0.35),
+            color: accentColor.withValues(alpha: 0.35),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),
@@ -355,15 +578,16 @@ class _DashboardCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Net Balance',
-              style: TextStyle(color: Colors.white70, fontSize: 12, letterSpacing: 0.5),
+              'Balance Summary',
+              style: TextStyle(
+                  color: Colors.white70, fontSize: 12, letterSpacing: 0.5),
             ),
             const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
                   child: _BalanceColumn(
-                    label: 'You will give',
+                    label: payLabel,
                     amount: toPay,
                     color: const Color(0xFFFF8A80),
                     icon: Icons.arrow_upward_rounded,
@@ -377,7 +601,7 @@ class _DashboardCard extends StatelessWidget {
                 ),
                 Expanded(
                   child: _BalanceColumn(
-                    label: 'You will get',
+                    label: receiveLabel,
                     amount: toReceive,
                     color: const Color(0xFF69F0AE),
                     icon: Icons.arrow_downward_rounded,
@@ -462,18 +686,20 @@ class _BalanceColumn extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 // Search and Filter Bar
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _SearchAndFilterBar extends StatelessWidget {
   final TextEditingController controller;
+  final String hint;
   final FilterMode currentFilter;
   final ValueChanged<String> onSearch;
   final ValueChanged<FilterMode> onFilter;
 
   const _SearchAndFilterBar({
     required this.controller,
+    required this.hint,
     required this.currentFilter,
     required this.onSearch,
     required this.onFilter,
@@ -485,7 +711,7 @@ class _SearchAndFilterBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
         children: [
-          // Search
+          // Search field
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -502,8 +728,9 @@ class _SearchAndFilterBar extends StatelessWidget {
               controller: controller,
               onChanged: onSearch,
               decoration: InputDecoration(
-                hintText: 'Search by name or phone…',
-                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                hintText: hint,
+                hintStyle:
+                    TextStyle(color: Colors.grey.shade400, fontSize: 14),
                 prefixIcon: Icon(Icons.search, color: Colors.grey.shade400),
                 suffixIcon: controller.text.isNotEmpty
                     ? IconButton(
@@ -610,9 +837,9 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Customer List Card
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer / Contact List Card
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CustomerListCard extends ConsumerWidget {
   final Customer customer;
@@ -628,7 +855,8 @@ class _CustomerListCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final int balance = ref.watch(customerBalanceProvider(customer.id));
-    final lastTxnDate = ref.watch(customerLastTransactionProvider(customer.id));
+    final lastTxnDate =
+        ref.watch(customerLastTransactionProvider(customer.id));
 
     final Color balanceColor;
     final String balanceLabel;
@@ -644,11 +872,23 @@ class _CustomerListCard extends ConsumerWidget {
       balanceLabel = 'Settled up';
     }
 
-    // Use safeText first to strip any malformed UTF-16 before we
-    // slice characters. Directly indexing customer.name[0] can crash
-    // if the first codeunit is a lone surrogate (e.g. some emoji).
     final safeName = safeText(customer.name, fallback: '?');
     final initial = safeName.isNotEmpty ? safeName[0].toUpperCase() : '?';
+
+    // Avatar color per type
+    final Color avatarTop;
+    final Color avatarBottom;
+    switch (customer.contactType) {
+      case ContactType.customer:
+        avatarTop = const Color(0xFF005CEE);
+        avatarBottom = const Color(0xFF5B9BFF);
+      case ContactType.supplier:
+        avatarTop = const Color(0xFFE65100);
+        avatarBottom = const Color(0xFFFF8A65);
+      case ContactType.staff:
+        avatarTop = const Color(0xFF6A1B9A);
+        avatarBottom = const Color(0xFFAB47BC);
+    }
 
     return Material(
       borderRadius: BorderRadius.circular(12),
@@ -672,13 +912,13 @@ class _CustomerListCard extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               children: [
-                // Gradient avatar
+                // Gradient avatar (color adapts to type)
                 Container(
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF005CEE), Color(0xFF5B9BFF)],
+                    gradient: LinearGradient(
+                      colors: [avatarTop, avatarBottom],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
@@ -698,7 +938,7 @@ class _CustomerListCard extends ConsumerWidget {
 
                 const SizedBox(width: 12),
 
-                // Name + last transaction date
+                // Name + last transaction
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -717,7 +957,8 @@ class _CustomerListCard extends ConsumerWidget {
                       Text(
                         lastTxnDate != null
                             ? 'Last: ${_relativeDate.format(lastTxnDate)}'
-                            : safeText(customer.phone, fallback: 'No transactions yet'),
+                            : safeText(customer.phone,
+                                fallback: 'No transactions yet'),
                         style: TextStyle(
                           color: Colors.grey.shade500,
                           fontSize: 12,
@@ -743,8 +984,8 @@ class _CustomerListCard extends ConsumerWidget {
                     ),
                     const SizedBox(height: 2),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: balanceColor.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(4),
@@ -765,17 +1006,23 @@ class _CustomerListCard extends ConsumerWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Empty state
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Empty state (per type)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
-  final bool hasCustomers;
-  final VoidCallback onAddCustomer;
+  final bool hasItems;
+  final String emptyTitle;
+  final String addLabel;
+  final Color typeAccent;
+  final VoidCallback onAdd;
 
   const _EmptyState({
-    required this.hasCustomers,
-    required this.onAddCustomer,
+    required this.hasItems,
+    required this.emptyTitle,
+    required this.addLabel,
+    required this.typeAccent,
+    required this.onAdd,
   });
 
   @override
@@ -787,13 +1034,13 @@ class _EmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              hasCustomers ? Icons.search_off : Icons.people_outline,
+              hasItems ? Icons.search_off : Icons.people_outline,
               size: 72,
               color: Colors.grey.shade300,
             ),
             const SizedBox(height: 16),
             Text(
-              hasCustomers ? 'No customers found' : 'No customers yet',
+              hasItems ? 'No matches found' : emptyTitle,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -802,22 +1049,23 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              hasCustomers
+              hasItems
                   ? 'Try a different name or clear your search.'
-                  : 'Tap the button below to add your first customer.',
+                  : 'Tap the button below to add one.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
-            if (!hasCustomers) ...[
+            if (!hasItems) ...[
               const SizedBox(height: 24),
               ElevatedButton.icon(
-                onPressed: onAddCustomer,
+                onPressed: onAdd,
                 icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Add your first customer'),
+                label: Text(addLabel),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF005CEE),
+                  backgroundColor: typeAccent,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -831,9 +1079,9 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 // Settlement Guard Bottom Sheet
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _UnsettledDeleteSheet extends StatelessWidget {
   final String name;
@@ -848,10 +1096,10 @@ class _UnsettledDeleteSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isOwed = balancePaise > 0; // customer owes you
+    final isOwed = balancePaise > 0;
     final absAmount = _currency.format(balancePaise.abs() / 100.0);
     final color = isOwed ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
-    final safeName = safeText(name, fallback: 'this customer');
+    final safeName = safeText(name, fallback: 'this contact');
     final label = isOwed
         ? '$safeName owes you $absAmount'
         : 'You owe $safeName $absAmount';
@@ -866,7 +1114,6 @@ class _UnsettledDeleteSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Red lock icon
           Container(
             width: 60,
             height: 60,
@@ -879,7 +1126,7 @@ class _UnsettledDeleteSheet extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           const Text(
-            'Cannot Delete Customer',
+            'Cannot Delete Contact',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 18,
@@ -893,9 +1140,9 @@ class _UnsettledDeleteSheet extends StatelessWidget {
             style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
           ),
           const SizedBox(height: 16),
-          // Balance chip
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(12),
@@ -948,9 +1195,9 @@ class _UnsettledDeleteSheet extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 // Sync Status Banner
-// ---------------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _SyncStatusBanner extends StatelessWidget {
   final SyncStatus status;

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../models/customer.dart';
 import '../../providers/db_provider.dart';
 import '../../services/pdf_service.dart';
 import '../../services/csv_service.dart';
@@ -25,7 +26,11 @@ const _kCreditBg = Color(0xFFF0FFF0);
 const _kBg = Color(0xFFF1F5F9); // slate-100
 
 class ReportsScreen extends ConsumerStatefulWidget {
-  const ReportsScreen({super.key});
+  /// When set, the report is filtered to only show transactions from contacts
+  /// of this type (Customer / Supplier / Staff). Pass `null` for the global report.
+  final ContactType? filterType;
+
+  const ReportsScreen({super.key, this.filterType});
 
   @override
   ConsumerState<ReportsScreen> createState() => _ReportsScreenState();
@@ -39,8 +44,20 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   final TextEditingController _searchCtrl = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Set the type filter so accountStatementProvider scopes to the correct type.
+    // Use addPostFrameCallback to avoid mutation-during-build errors.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(contactTypeFilterProvider.notifier).setType(widget.filterType);
+    });
+  }
+
+  @override
   void dispose() {
     _searchCtrl.dispose();
+    // Always clear the type filter when leaving so it doesn't persist.
+    ref.read(contactTypeFilterProvider.notifier).clear();
     super.dispose();
   }
 
@@ -111,12 +128,34 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   }
 
   // ── Helpers (logic unchanged) ─────────────────────────────────────────────
-  String _getUserName() {
-    final db = ref.read(dbServiceProvider);
-    final businessName = db.getBusinessName();
-    if (businessName != null && businessName.isNotEmpty) return businessName;
-    final user = FirebaseAuth.instance.currentUser;
-    return user?.displayName ?? 'Account Statement';
+  String _getScreenTitle() {
+    switch (widget.filterType) {
+      case ContactType.supplier:
+        return 'Supplier Statement';
+      case ContactType.staff:
+        return 'Staff Statement';
+      case ContactType.customer:
+        return 'Customer Statement';
+      case null:
+        final db = ref.read(dbServiceProvider);
+        final businessName = db.getBusinessName();
+        if (businessName != null && businessName.isNotEmpty) return businessName;
+        final user = FirebaseAuth.instance.currentUser;
+        return user?.displayName ?? 'Account Statement';
+    }
+  }
+
+  String _getSubtitle() {
+    switch (widget.filterType) {
+      case ContactType.supplier:
+        return 'Supplier Report';
+      case ContactType.staff:
+        return 'Staff Report';
+      case ContactType.customer:
+        return 'Customer Report';
+      case null:
+        return 'Account Statement';
+    }
   }
 
   String _getDateRangeLabel() {
@@ -132,7 +171,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await PdfService.generateAccountStatementPdf(
-        userName: _getUserName(),
+        userName: _getScreenTitle(),
         statement: statement,
         dateRange: dateRange,
       );
@@ -149,7 +188,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await CsvService.generateAccountStatementCsv(
-        userName: _getUserName(),
+        userName: _getScreenTitle(),
         statement: statement,
         dateRange: dateRange,
       );
@@ -172,7 +211,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       final statement = await ref.read(accountStatementProvider.future);
       final dateRange = ref.read(reportDateRangeProvider);
       final filePath = await PdfService.generateAccountStatementPdf(
-        userName: _getUserName(),
+        userName: _getScreenTitle(),
         statement: statement,
         dateRange: dateRange,
       );
@@ -202,7 +241,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     final statementAsync = ref.watch(accountStatementProvider);
-    final userName = _getUserName();
+    final screenTitle = _getScreenTitle();
+    final subtitle = _getSubtitle();
     final isFiltered = _filterMode == 'DATE RANGE';
 
     return Scaffold(
@@ -211,7 +251,8 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         children: [
           // ── Premium Gradient Header ──────────────────────────────────────
           _ReportHeader(
-            userName: userName,
+            userName: screenTitle,
+            subtitle: subtitle,
             dateRangeLabel: _getDateRangeLabel(),
             onBack: () => Navigator.pop(context),
           ),
@@ -422,11 +463,13 @@ class _StatementShimmerState extends State<_StatementShimmer>
 // ── Header ──────────────────────────────────────────────────────────────────
 class _ReportHeader extends StatelessWidget {
   final String userName;
+  final String subtitle;
   final String dateRangeLabel;
   final VoidCallback onBack;
 
   const _ReportHeader({
     required this.userName,
+    required this.subtitle,
     required this.dateRangeLabel,
     required this.onBack,
   });
@@ -512,9 +555,9 @@ class _ReportHeader extends StatelessWidget {
                       const Icon(Icons.receipt_long_rounded,
                           color: Colors.white60, size: 14),
                       const SizedBox(width: 6),
-                      const Text(
-                        'Account Statement  •  ',
-                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      Text(
+                        '$subtitle  •  ',
+                        style: const TextStyle(color: Colors.white60, fontSize: 12),
                       ),
                       Text(
                         dateRangeLabel,

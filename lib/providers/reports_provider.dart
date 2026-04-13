@@ -1,6 +1,25 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import 'db_provider.dart';
+import '../models/customer.dart';
+
+// ---------------------------------------------------------------------------
+// Optional contact-type filter — set by ReportsScreen when opened from a tab
+// ---------------------------------------------------------------------------
+/// When non-null, [accountStatementProvider] only includes transactions from
+/// contacts of this type. Reset to null for the global account statement.
+class ContactTypeFilterNotifier extends Notifier<ContactType?> {
+  @override
+  ContactType? build() => null;
+
+  void setType(ContactType? type) => state = type;
+  void clear() => state = null;
+}
+
+final contactTypeFilterProvider =
+    NotifierProvider<ContactTypeFilterNotifier, ContactType?>(
+  ContactTypeFilterNotifier.new,
+);
 
 // ---------------------------------------------------------------------------
 // Data Models for the Account Statement
@@ -115,6 +134,7 @@ const _monthNames = [
 final accountStatementProvider = FutureProvider<AccountStatement>((ref) async {
   final dateRange = ref.watch(reportDateRangeProvider);
   final searchText = ref.watch(reportSearchTextProvider).trim().toLowerCase();
+  final contactTypeFilter = ref.watch(contactTypeFilterProvider);
   final db = ref.watch(dbServiceProvider);
 
   // Allow the UI to render the loading shimmer for at least one frame.
@@ -128,14 +148,25 @@ final accountStatementProvider = FutureProvider<AccountStatement>((ref) async {
       ? DateTime(dateRange.end.year, dateRange.end.month, dateRange.end.day)
       : null;
 
+  // Build a name map and — when filtering by type — a set of matching ids.
+  final allCustomers = db.getAllCustomers();
   final customerNames = <String, String>{
-    for (final c in db.getAllCustomers()) c.id: c.name,
+    for (final c in allCustomers) c.id: c.name,
   };
+  final Set<String>? allowedIds = contactTypeFilter == null
+      ? null
+      : {
+          for (final c in allCustomers)
+            if (c.contactType == contactTypeFilter) c.id,
+        };
 
   final List<AccountStatementEntry> allEntries = [];
 
   for (final t in db.transactionsBox.values) {
     if (t.isDeleted) continue;
+
+    // Skip contacts not in the allowed type set (when a filter is active)
+    if (allowedIds != null && !allowedIds.contains(t.customerId)) continue;
 
     final customerName = customerNames[t.customerId] ?? 'Unknown';
 

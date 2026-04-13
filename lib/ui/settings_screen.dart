@@ -519,7 +519,7 @@ class _ProfileHeader extends ConsumerWidget {
                       ? Text(
                           (user.displayName != null &&
                                   user.displayName!.isNotEmpty)
-                              ? user.displayName!.substring(0, 1).toUpperCase()
+                              ? user.displayName!.characters.take(1).toString().toUpperCase()
                               : '?',
                           style: const TextStyle(
                             fontSize: 28,

@@ -45,12 +45,17 @@ class CustomerNotifier extends Notifier<List<Customer>> {
     return ref.watch(dbServiceProvider).getAllCustomers();
   }
 
-  Future<void> addCustomer(String name, String? phone) async {
+  Future<void> addCustomer(
+    String name,
+    String? phone, {
+    ContactType contactType = ContactType.customer,
+  }) async {
     final customer = Customer(
       id: const Uuid().v4(),
       name: name,
       phone: phone,
       createdAt: DateTime.now(),
+      contactType: contactType,
     );
     final db = ref.read(dbServiceProvider);
     await db.saveCustomer(customer);
@@ -73,11 +78,10 @@ class CustomerNotifier extends Notifier<List<Customer>> {
 }
 
 // ---------------------------------------------------------------------------
-// Filtered customer list (reactive — recomputes only when inputs change)
+// Filtered customer list (all types — used by Reports screen)
 // ---------------------------------------------------------------------------
 
 /// Derives a filtered and searched customer list from Riverpod providers.
-/// This replaces the inline computation that previously lived in build().
 /// Uses `autoDispose` so it tears down when the home screen is popped.
 final filteredCustomersProvider =
     Provider.autoDispose<List<Customer>>((ref) {
