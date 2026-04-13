@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../models/customer.dart';
 import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
@@ -92,21 +93,121 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
     }
   }
 
-  Future<void> _sendWhatsApp(BuildContext context, int balancePaise) async {
+  Future<void> _showWhatsAppOptions(
+    BuildContext context,
+    int balancePaise,
+    List<TransactionModel> transactions,
+  ) async {
     if (widget.customer.phone == null || widget.customer.phone!.isEmpty) {
       _showSnack(context, 'No phone number saved for this customer.');
       return;
     }
-    final msg =
-        'Hi ${widget.customer.name}, your pending balance is ${_currency.format(balancePaise.abs() / 100.0)}. Please clear it soon.';
-    final url = Uri.parse(
-        'whatsapp://send?phone=${widget.customer.phone}&text=${Uri.encodeComponent(msg)}');
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle bar
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Send via WhatsApp',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              widget.customer.name,
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 20),
+            // Option 1: PDF statement
+            _WhatsAppOption(
+              icon: Icons.picture_as_pdf_outlined,
+              iconColor: const Color(0xFF1565C0),
+              title: 'Send Account Statement (PDF)',
+              subtitle: 'Generate & share full ledger statement',
+              onTap: () {
+                Navigator.pop(ctx);
+                _shareStatementViaWhatsApp(context, balancePaise, transactions);
+              },
+            ),
+            const SizedBox(height: 12),
+            // Option 2: Quick text
+            _WhatsAppOption(
+              icon: Icons.chat_bubble_outline_rounded,
+              iconColor: const Color(0xFF25D366),
+              title: 'Send Quick Reminder',
+              subtitle: 'Send a payment reminder message',
+              onTap: () {
+                Navigator.pop(ctx);
+                _sendQuickWhatsApp(context, balancePaise);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
+  Future<void> _shareStatementViaWhatsApp(
+    BuildContext context,
+    int balancePaise,
+    List<TransactionModel> transactions,
+  ) async {
+    _showSnack(context, 'Generating statement PDF…');
+    try {
+      final filePath = await PdfService.generateCustomerStatementPdfPath(
+        customer: widget.customer,
+        transactions: transactions,
+        balance: balancePaise / 100.0,
+        dateRange: _filterRange,
+      );
+      final msg = 'Hi ${widget.customer.name}, please find your account '
+          'statement attached. Pending balance: '
+          '${_currency.format(balancePaise.abs() / 100.0)}. Please clear it soon.';
+      // ignore: deprecated_member_use
+      await Share.shareXFiles([XFile(filePath)], text: msg);
+    } catch (e) {
+      if (context.mounted) {
+        _showSnack(context, 'Could not generate PDF. Try again.');
+      }
+    }
+  }
+
+  Future<void> _sendQuickWhatsApp(BuildContext context, int balancePaise) async {
+    final msg =
+        'Hi ${widget.customer.name}, your pending balance is '
+        '${_currency.format(balancePaise.abs() / 100.0)}. Please clear it soon.';
+        
+    String phoneStr = widget.customer.phone ?? '';
+    phoneStr = phoneStr.replaceAll(RegExp(r'[^\d+]'), ''); // Keep only digits and +
+    if (phoneStr.length == 10 && !phoneStr.startsWith('+')) {
+      phoneStr = '+91$phoneStr';
+    } else if (phoneStr.length == 12 && phoneStr.startsWith('91')) {
+      phoneStr = '+$phoneStr';
+    }
+
+    final url = Uri.parse(
+        'whatsapp://send?phone=$phoneStr&text=${Uri.encodeComponent(msg)}');
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     } else {
       final smsUrl = Uri.parse(
-          'sms:${widget.customer.phone}?body=${Uri.encodeComponent(msg)}');
+          'sms:$phoneStr?body=${Uri.encodeComponent(msg)}');
       if (await canLaunchUrl(smsUrl)) {
         await launchUrl(smsUrl);
       } else {
@@ -244,7 +345,7 @@ class _CustomerDetailsScreenState extends ConsumerState<CustomerDetailsScreen> {
                 }
               }
             },
-            onWhatsApp: () => _sendWhatsApp(context, balance),
+            onWhatsApp: () => _showWhatsAppOptions(context, balance, transactions),
             showWhatsApp: owesYou,
             onSettle: () async {
               final confirm = await showDialog<bool>(
@@ -957,6 +1058,70 @@ class _BottomButton extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// WhatsApp Option Tile (used in bottom sheet)
+// ---------------------------------------------------------------------------
+class _WhatsAppOption extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _WhatsAppOption({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade200),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: iconColor, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: TextStyle(
+                          fontSize: 12, color: Colors.grey.shade500)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 20),
+          ],
+        ),
       ),
     );
   }
