@@ -10,6 +10,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../services/db_service.dart';
 import '../services/auth_service.dart';
 import '../models/customer.dart';
+import '../models/khatabook.dart';
 import '../models/transaction.dart';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,33 @@ class FirestoreBackupService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   String get _ts => DateTime.now().toIso8601String();
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Firestore path helpers (nested sub-collection structure)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  DocumentReference _bookRef(String uid, String bookId) =>
+      _firestore.collection('users').doc(uid)
+          .collection('khatabooks').doc(bookId);
+
+  CollectionReference _customersRef(String uid, String bookId) =>
+      _bookRef(uid, bookId).collection('customers');
+
+  CollectionReference _transactionsRef(String uid, String bookId) =>
+      _bookRef(uid, bookId).collection('transactions');
+
+  DocumentReference _backupInfoRef(String uid, String bookId) =>
+      _bookRef(uid, bookId).collection('meta').doc('backup_info');
+
+  // Legacy flat paths — read-only during migration window
+  CollectionReference _legacyCustomersRef(String uid) =>
+      _firestore.collection('users').doc(uid).collection('customers');
+
+  CollectionReference _legacyTransactionsRef(String uid) =>
+      _firestore.collection('users').doc(uid).collection('transactions');
+
+  CollectionReference _legacyMetaRef(String uid) =>
+      _firestore.collection('users').doc(uid).collection('meta');
 
   Future<String> _getUidWithSessionCheck() async {
     debugPrint('[AUTH][$_ts] _getUidWithSessionCheck() called');
@@ -142,44 +170,61 @@ class FirestoreBackupService {
   // BACKUP
   // -------------------------------------------------------------------------
 
-  /// Backs up all customers and transactions to Firestore using batch writes.
-  /// Splits into chunks of [_batchLimit] to respect Firestore's 500-op limit.
+  /// Backs up all Khatabooks, customers, and transactions using nested Firestore
+  /// sub-collections. Also performs the one-time cleanup of old flat-path docs.
   Future<void> backupAll(DbService db) async {
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
 
-    // Include ALL customers (active + soft-deleted) so the Recycle Bin
-    // survives a device swap or reinstall. getAllCustomers() was incorrect
-    // here because it filters isDeleted==true (Phase 4 audit fix — P0).
-    final customers = db.customersBox.values.toList();
-    final transactions = db.transactionsBox.values.toList();
+    final books = db.khatabooksBox.values.toList();
+    final allCustomers = db.customersBox.values.toList();    // ALL books
+    final allTransactions = db.transactionsBox.values.toList();
 
     // SAFETY GUARD: Never upload empty data to cloud.
-    if (customers.isEmpty && transactions.isEmpty) {
-      if (kDebugMode) debugPrint('[FirestoreBackup] Skipping backup — local data is empty. Cloud data preserved.');
+    if (books.isEmpty && allCustomers.isEmpty && allTransactions.isEmpty) {
+      if (kDebugMode) debugPrint('[FirestoreBackup] Skipping backup — local data is empty.');
       return;
     }
 
     final List<_WriteOp> ops = [];
 
-    for (final c in customers) {
-      final ref = _firestore
-          .collection('users').doc(uid)
-          .collection('customers').doc(c.id);
-      ops.add(_WriteOp(ref: ref, data: c.toFirestore()));
+    // 1. Khatabook metadata documents
+    for (final book in books) {
+      ops.add(_WriteOp(ref: _bookRef(uid, book.id), data: book.toFirestore()));
     }
 
-    for (final t in transactions) {
-      final ref = _firestore
-          .collection('users').doc(uid)
-          .collection('transactions').doc(t.id);
-      ops.add(_WriteOp(ref: ref, data: t.toFirestore()));
+    // 2. Customers + transactions — grouped under their book's sub-collection
+    for (final c in allCustomers) {
+      ops.add(_WriteOp(
+        ref: _customersRef(uid, c.khatabookId).doc(c.id),
+        data: c.toFirestore(),
+      ));
+    }
+    for (final t in allTransactions) {
+      ops.add(_WriteOp(
+        ref: _transactionsRef(uid, t.khatabookId).doc(t.id),
+        data: t.toFirestore(),
+      ));
     }
 
     await _commitInChunks(ops);
 
-    // Write backup metadata and retrieve server timestamp for clock-safe comparisons
-    await _writeBackupInfoAndStoreServerTime(uid, db, customers.length, transactions.length);
+    // 3. Write backup_info under each book
+    for (final book in books) {
+      final bookCustomers =
+          allCustomers.where((c) => c.khatabookId == book.id).length;
+      final bookTxns =
+          allTransactions.where((t) => t.khatabookId == book.id).length;
+      await _writeBackupInfoAndStoreServerTime(
+          uid, book.id, db, bookCustomers, bookTxns);
+    }
+
+    // 4. One-time: clean up old flat-path documents
+    if (!db.cloudMigrationDone) {
+      await _cleanupOldFlatPaths(uid);
+      await db.setCloudMigrationDone(true);
+      if (kDebugMode) debugPrint('[FirestoreBackup] Old flat-path cleanup done.');
+    }
   }
 
   /// Incrementally backs up changes using the local sync_queue.
@@ -205,29 +250,44 @@ class FirestoreBackupService {
       final String action = entry['action'];
 
       DocumentReference ref;
-      if (type == 'customer') {
-        ref = _firestore.collection('users').doc(uid).collection('customers').doc(id);
-      } else {
-        ref = _firestore.collection('users').doc(uid).collection('transactions').doc(id);
+      if (type == 'khatabook') {
+        // Khatabook metadata document
+        ref = _bookRef(uid, id);
+        if (action == 'delete') {
+          ops.add(_WriteOp(ref: ref, data: null, isDelete: true, queueKey: key));
+        } else {
+          final book = db.khatabooksBox.get(id);
+          if (book != null) {
+            ops.add(_WriteOp(ref: ref, data: book.toFirestore(), queueKey: key));
+          } else {
+            skippedKeys.add(key);
+          }
+        }
+        continue;
       }
 
-      if (action == 'delete') {
-        ops.add(_WriteOp(ref: ref, data: null, isDelete: true, queueKey: key));
-      } else {
-        if (type == 'customer') {
-          final customer = db.customersBox.get(id);
-          if (customer != null) {
-            ops.add(_WriteOp(ref: ref, data: customer.toFirestore(), isDelete: false, queueKey: key));
-          } else {
-            skippedKeys.add(key);
-          }
+      if (type == 'customer') {
+        final customer = db.customersBox.get(id);
+        final bookId = customer?.khatabookId ?? 'default';
+        ref = _customersRef(uid, bookId).doc(id) as DocumentReference;
+        if (action == 'delete') {
+          ops.add(_WriteOp(ref: ref, data: null, isDelete: true, queueKey: key));
+        } else if (customer != null) {
+          ops.add(_WriteOp(ref: ref, data: customer.toFirestore(), queueKey: key));
         } else {
-          final txn = db.transactionsBox.get(id);
-          if (txn != null) {
-            ops.add(_WriteOp(ref: ref, data: txn.toFirestore(), isDelete: false, queueKey: key));
-          } else {
-            skippedKeys.add(key);
-          }
+          skippedKeys.add(key);
+        }
+      } else {
+        // transaction
+        final txn = db.transactionsBox.get(id);
+        final bookId = txn?.khatabookId ?? 'default';
+        ref = _transactionsRef(uid, bookId).doc(id) as DocumentReference;
+        if (action == 'delete') {
+          ops.add(_WriteOp(ref: ref, data: null, isDelete: true, queueKey: key));
+        } else if (txn != null) {
+          ops.add(_WriteOp(ref: ref, data: txn.toFirestore(), queueKey: key));
+        } else {
+          skippedKeys.add(key);
         }
       }
     }
@@ -239,38 +299,43 @@ class FirestoreBackupService {
 
     await _commitIncrementalChunks(ops, queue, skippedKeys);
 
-    // Update metadata and store server timestamp locally for clock-safe comparisons
+    // Update metadata for the active book
+    final activeBookId = db.activeKhatabookId;
     await _writeBackupInfoAndStoreServerTime(
-      uid, db, db.customersBox.length, db.transactionsBox.length);
+      uid,
+      activeBookId,
+      db,
+      db.customersBox.values.where((c) => c.khatabookId == activeBookId).length,
+      db.transactionsBox.values.where((t) => t.khatabookId == activeBookId).length,
+    );
   }
 
-  /// Writes backup_info to Firestore, then reads back the server-issued
-  /// timestamp and stores it in Hive. This timestamp is used for conflict
-  /// resolution so we never depend on the device clock.
+  /// Writes backup_info to the nested Firestore path for a specific book,
+  /// then reads back the server-issued timestamp and stores it in Hive.
   Future<void> _writeBackupInfoAndStoreServerTime(
-    String uid, DbService db, int customerCount, int txnCount) async {
+    String uid, String bookId, DbService db, int customerCount, int txnCount) async {
     try {
       await _withAuthRetry(() async {
-        final docRef = _firestore
-            .collection('users').doc(uid)
-            .collection('meta').doc('backup_info');
+        final docRef = _backupInfoRef(uid, bookId);
 
         await docRef.set({
           'lastBackupAt': FieldValue.serverTimestamp(),
           'device': Platform.operatingSystem,
           'totalCustomers': customerCount,
           'totalTransactions': txnCount,
-        }).timeout(const Duration(seconds: 30), onTimeout: () => throw FirestoreTimeoutException());
+        }).timeout(const Duration(seconds: 30),
+            onTimeout: () => throw FirestoreTimeoutException());
 
-        // --- FIX: Read back the server-issued timestamp (immune to device clock drift) ---
-        // We wait a moment for Firestore to settle the serverTimestamp, then read it back.
+        // Read back the server-issued timestamp (immune to device clock drift)
         final snapshot = await docRef.get().timeout(const Duration(seconds: 10));
         if (snapshot.exists) {
-          final data = snapshot.data();
+          final data = snapshot.data() as Map<String, dynamic>?;
           final lastBackupAt = data?['lastBackupAt'];
           if (lastBackupAt is Timestamp) {
             await db.setLastAcknowledgedServerTime(lastBackupAt.millisecondsSinceEpoch);
-            if (kDebugMode) debugPrint('[SYNC][$_ts] Stored server timestamp: ${lastBackupAt.millisecondsSinceEpoch}');
+            if (kDebugMode) {
+              debugPrint('[SYNC][$_ts] Stored server timestamp: ${lastBackupAt.millisecondsSinceEpoch}');
+            }
           }
         }
       });
@@ -280,83 +345,139 @@ class FirestoreBackupService {
   }
 
   // -------------------------------------------------------------------------
-  // RESTORE — with TOCTOU crash safety + multi-device merge
+  // RESTORE — with TOCTOU crash safety + multi-device merge + cloud migration
   // -------------------------------------------------------------------------
 
-  /// Restores data from Firestore into Hive using per-document last-write-wins.
+  /// Restores data from Firestore into Hive.
   ///
-  /// **Crash safety (TOCTOU fix):** A `pendingRestore` flag is written to Hive
-  /// BEFORE any local data is modified. If the app crashes mid-restore, the
-  /// next startup detects the flag and re-runs `restoreAll()` automatically.
-  ///
-  /// **Multi-device merge:** Instead of wiping all local data first, we only
-  /// overwrite local documents where the remote version is strictly newer.
-  /// Records that exist locally but not in the remote snapshot are preserved.
+  /// **Migration path**: On first run after feature update, checks new nested
+  /// paths first. If empty, falls back to old flat-path collections for backward
+  /// compatibility and silently migrates all old data to the 'default' book.
   Future<void> restoreAll(DbService db) async {
     debugPrint('[SYNC][$_ts] restoreAll() STARTED');
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
 
-    // ── TOCTOU SAFETY: Mark restore as in-progress BEFORE touching local data ──
     await db.setPendingRestore(true);
     db.setRestoringCallback(true);
 
     try {
-      // Fetch both collections concurrently
-      if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() fetching customers & transactions from Firestore...');
-      final results = await Future.wait([
-        _withAuthRetry(() => _firestore
-            .collection('users').doc(uid).collection('customers')
-            .get().timeout(const Duration(seconds: 15),
-                onTimeout: () => throw FirestoreTimeoutException())),
-        _withAuthRetry(() => _firestore
-            .collection('users').doc(uid).collection('transactions')
-            .get().timeout(const Duration(seconds: 15),
-                onTimeout: () => throw FirestoreTimeoutException())),
-      ]);
+      // Fetch Khatabooks metadata (new nested structure)
+      if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() fetching khatabooks...');
+      final booksSnap = await _withAuthRetry(() =>
+          _firestore.collection('users').doc(uid).collection('khatabooks')
+              .get().timeout(const Duration(seconds: 15),
+                  onTimeout: () => throw FirestoreTimeoutException()));
 
-      final customerDocs = results[0];
-      final transactionDocs = results[1];
+      List<Khatabook> remoteBooks = [];
+      List<Customer> remoteCustomers = [];
+      List<TransactionModel> remoteTransactions = [];
 
-      final remoteCustomers = customerDocs.docs
-          .map((d) => Customer.fromFirestore(d.data()))
-          .toList();
-      final remoteTransactions = transactionDocs.docs
-          .map((d) => TransactionModel.fromFirestore(d.data()))
-          .toList();
+      final hasNewStructure = booksSnap.docs.isNotEmpty;
+
+      if (!hasNewStructure || !db.cloudMigrationDone) {
+        // ── MIGRATION PATH: new paths empty → read from old flat paths ─────────
+        if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() MIGRATION PATH — reading legacy flat paths...');
+
+        final results = await Future.wait([
+          _withAuthRetry(() => _legacyCustomersRef(uid)
+              .get().timeout(const Duration(seconds: 15),
+                  onTimeout: () => throw FirestoreTimeoutException())),
+          _withAuthRetry(() => _legacyTransactionsRef(uid)
+              .get().timeout(const Duration(seconds: 15),
+                  onTimeout: () => throw FirestoreTimeoutException())),
+        ]);
+
+        remoteCustomers = (results[0] as QuerySnapshot).docs
+            .map((d) => Customer.fromFirestore(d.data() as Map<String, dynamic>))
+            .map((c) => c.copyWith(khatabookId: 'default')) // stamp all as default
+            .toList();
+        remoteTransactions = (results[1] as QuerySnapshot).docs
+            .map((d) => TransactionModel.fromFirestore(d.data() as Map<String, dynamic>))
+            .map((t) => t.copyWith(khatabookId: 'default'))
+            .toList();
+
+        // Create a default book if there are no books at all
+        if (booksSnap.docs.isEmpty) {
+          remoteBooks = [
+            Khatabook(
+              id: 'default',
+              name: db.getBusinessName() ?? 'My Business',
+              createdAt: DateTime.now(),
+            )
+          ];
+        } else {
+          remoteBooks = booksSnap.docs
+              .map((d) => Khatabook.fromFirestore(d.data() as Map<String, dynamic>))
+              .toList();
+        }
+      } else {
+        // ── NORMAL PATH: read from new nested sub-collections ──────────────────
+        if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() NORMAL PATH — reading nested sub-collections...');
+        remoteBooks = booksSnap.docs
+            .map((d) => Khatabook.fromFirestore(d.data() as Map<String, dynamic>))
+            .toList();
+
+        // Fetch customers + transactions for all books concurrently
+        final futures = remoteBooks.map((book) => Future.wait([
+          _withAuthRetry(() => _customersRef(uid, book.id)
+              .get().timeout(const Duration(seconds: 15),
+                  onTimeout: () => throw FirestoreTimeoutException())),
+          _withAuthRetry(() => _transactionsRef(uid, book.id)
+              .get().timeout(const Duration(seconds: 15),
+                  onTimeout: () => throw FirestoreTimeoutException())),
+        ]));
+        final allResults = await Future.wait(futures);
+        for (final result in allResults) {
+          remoteCustomers.addAll((result[0] as QuerySnapshot).docs
+              .map((d) => Customer.fromFirestore(d.data() as Map<String, dynamic>)));
+          remoteTransactions.addAll((result[1] as QuerySnapshot).docs
+              .map((d) => TransactionModel.fromFirestore(d.data() as Map<String, dynamic>)));
+        }
+      }
 
       if (kDebugMode) {
-        debugPrint('[SYNC][$_ts] restoreAll() fetched ${remoteCustomers.length} customers, '
+        debugPrint('[SYNC][$_ts] restoreAll() fetched '
+            '${remoteBooks.length} books, '
+            '${remoteCustomers.length} customers, '
             '${remoteTransactions.length} transactions');
       }
 
       // SAFETY GUARD: Never overwrite with empty remote data
-      if (remoteCustomers.isEmpty && remoteTransactions.isEmpty) {
+      if (remoteCustomers.isEmpty && remoteTransactions.isEmpty && remoteBooks.isEmpty) {
         if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() — remote is empty, keeping local data intact');
         return;
       }
 
-      // ── MULTI-DEVICE MERGE: Per-document last-write-wins ──
-      // We do NOT call clearAll(). Instead, we only overwrite local records
-      // if the remote version is newer (or the record doesn't exist locally).
-      // This preserves locally-created records that haven't synced yet.
+      // ── MULTI-DEVICE MERGE: Per-document last-write-wins ──────────────────
+
+      // Books
+      final booksToSave = <Khatabook>[];
+      for (final remote in remoteBooks) {
+        final local = db.khatabooksBox.get(remote.id);
+        if (local == null) {
+          booksToSave.add(remote);
+        } else {
+          final remoteTime = remote.updatedAt?.millisecondsSinceEpoch ?? 0;
+          final localTime = local.updatedAt?.millisecondsSinceEpoch ?? 0;
+          if (remoteTime > localTime) booksToSave.add(remote);
+        }
+      }
+
+      // Customers
       final customersToSave = <Customer>[];
       for (final remote in remoteCustomers) {
         final local = db.customersBox.get(remote.id);
         if (local == null) {
-          // New record from cloud — always accept
           customersToSave.add(remote);
         } else {
-          // Both exist — compare updatedAt (server-issued timestamps)
           final remoteTime = remote.updatedAt?.millisecondsSinceEpoch ?? 0;
           final localTime = local.updatedAt?.millisecondsSinceEpoch ?? 0;
-          if (remoteTime > localTime) {
-            customersToSave.add(remote); // Cloud is newer
-          }
-          // else: local is newer or equal — keep local, skip
+          if (remoteTime > localTime) customersToSave.add(remote);
         }
       }
 
+      // Transactions
       final transactionsToSave = <TransactionModel>[];
       for (final remote in remoteTransactions) {
         final local = db.transactionsBox.get(remote.id);
@@ -365,18 +486,22 @@ class FirestoreBackupService {
         } else {
           final remoteTime = remote.updatedAt?.millisecondsSinceEpoch ?? 0;
           final localTime = local.updatedAt?.millisecondsSinceEpoch ?? 0;
-          if (remoteTime > localTime) {
-            transactionsToSave.add(remote);
-          }
+          if (remoteTime > localTime) transactionsToSave.add(remote);
         }
       }
 
       if (kDebugMode) {
         debugPrint('[SYNC][$_ts] Merge result: '
-            '${customersToSave.length}/${remoteCustomers.length} customers to update, '
+            '${booksToSave.length}/${remoteBooks.length} books, '
+            '${customersToSave.length}/${remoteCustomers.length} customers, '
             '${transactionsToSave.length}/${remoteTransactions.length} transactions to update');
       }
 
+      if (booksToSave.isNotEmpty) {
+        await db.khatabooksBox.putAll(
+          {for (final b in booksToSave) b.id: b},
+        );
+      }
       if (customersToSave.isNotEmpty) await db.saveAllCustomers(customersToSave);
       if (transactionsToSave.isNotEmpty) await db.saveAllTransactions(transactionsToSave);
 
@@ -393,9 +518,33 @@ class FirestoreBackupService {
       if (kDebugMode) debugPrint('[ERROR][$_ts] Stack trace:\n$stackTrace');
       rethrow;
     } finally {
-      // ── TOCTOU SAFETY: Clear the flag only after ALL writes are done ──
       await db.setPendingRestore(false);
       db.setRestoringCallback(false);
+    }
+  }
+
+  /// Permanently removes old flat-path Firestore documents (customers, transactions, meta).
+  /// Called once after the first successful backupAll() to complete the cloud migration.
+  Future<void> _cleanupOldFlatPaths(String uid) async {
+    if (kDebugMode) debugPrint('[FirestoreBackup] Cleaning up legacy flat-path documents...');
+    try {
+      final results = await Future.wait([
+        _legacyCustomersRef(uid).get(),
+        _legacyTransactionsRef(uid).get(),
+        _legacyMetaRef(uid).get(),
+      ]);
+      final ops = <_WriteOp>[
+        for (final snap in results)
+          for (final d in (snap as QuerySnapshot).docs)
+            _WriteOp(ref: d.reference, data: null, isDelete: true),
+      ];
+      if (ops.isNotEmpty) await _commitInChunks(ops);
+      if (kDebugMode) {
+        debugPrint('[FirestoreBackup] Removed ${ops.length} legacy flat-path documents.');
+      }
+    } catch (e) {
+      // Non-fatal: cleanup failure should not block backup
+      if (kDebugMode) debugPrint('[FirestoreBackup] _cleanupOldFlatPaths() failed (non-fatal): $e');
     }
   }
 
@@ -403,20 +552,33 @@ class FirestoreBackupService {
   // BACKUP METADATA
   // -------------------------------------------------------------------------
 
-  /// Fetches the backup metadata document (may return null if never backed up).
-  Future<Map<String, dynamic>?> getBackupInfo() async {
+  /// Fetches the backup metadata doc. Tries new nested path first, falls back
+  /// to legacy flat path during the migration window.
+  Future<Map<String, dynamic>?> getBackupInfo({String bookId = 'default'}) async {
     debugPrint('[SYNC][$_ts] getBackupInfo() STARTED');
     await _assertConnected();
     final uid = await _getUidWithSessionCheck();
     try {
-      final doc = await _withAuthRetry(() => _firestore
-          .collection('users').doc(uid)
-          .collection('meta').doc('backup_info')
-          .get()
-          .timeout(const Duration(seconds: 10),
-              onTimeout: () => throw FirestoreTimeoutException()));
-      final result = doc.exists ? doc.data() : null;
-      if (kDebugMode) debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — exists=${doc.exists}, data=$result');
+      // Try new nested path
+      final newDoc = await _withAuthRetry(() =>
+          _backupInfoRef(uid, bookId)
+              .get()
+              .timeout(const Duration(seconds: 10),
+                  onTimeout: () => throw FirestoreTimeoutException()));
+      if (newDoc.exists) {
+        final result = newDoc.data() as Map<String, dynamic>?;
+        if (kDebugMode) debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — new path, data=$result');
+        return result;
+      }
+
+      // Fall back to legacy flat path
+      final oldDoc = await _withAuthRetry(() =>
+          _legacyMetaRef(uid).doc('backup_info')
+              .get()
+              .timeout(const Duration(seconds: 10),
+                  onTimeout: () => throw FirestoreTimeoutException()));
+      final result = oldDoc.exists ? oldDoc.data() as Map<String, dynamic>? : null;
+      if (kDebugMode) debugPrint('[SYNC][$_ts] getBackupInfo() ENDED — legacy path, data=$result');
       return result;
     } on TimeoutException {
       if (kDebugMode) debugPrint('[ERROR][$_ts] getBackupInfo() TIMED OUT');

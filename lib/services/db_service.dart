@@ -4,21 +4,25 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'dart:convert';
 import '../models/customer.dart';
+import '../models/khatabook.dart';
 import '../models/transaction.dart';
 
 class DbService {
-  static const String _customersBox   = 'customers';
+  static const String _customersBox    = 'customers';
   static const String _transactionsBox = 'transactions';
-  static const String _settingsBox    = 'settings';
+  static const String _settingsBox     = 'settings';
   static const String _syncQueueBoxStr = 'sync_queue';
+  static const String _khatabooksBox   = 'khatabooks'; // ← NEW
 
-  // ── Fix 4: instance fields (was static) ────────────────────────────────────
-  Box<Customer>?       _customers;
+  // ── Instance fields ────────────────────────────────────────────────────────
+  Box<Customer>?        _customers;
   Box<TransactionModel>? _transactions;
-  Box?                 _settings;
-  Box?                 _syncQueue;
+  Box?                  _settings;
+  Box?                  _syncQueue;
+  Box<Khatabook>?       _khatabooks;  // ← NEW
 
   Box get syncQueue => _syncQueue!;
+  Box<Khatabook> get khatabooksBox => _khatabooks!; // ← NEW
 
   // ── isRestoring: injected callback so DbService never imports Riverpod ──
   // The AutoSyncNotifier injects a getter here at startup.
@@ -79,6 +83,7 @@ class DbService {
     // Register Adapters
     if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(CustomerAdapter());
     if (!Hive.isAdapterRegistered(2)) Hive.registerAdapter(TransactionModelAdapter());
+    if (!Hive.isAdapterRegistered(3)) Hive.registerAdapter(KhatabookAdapter()); // ← NEW
 
     // Open boxes
     if (encryptionCipher != null) {
@@ -90,17 +95,21 @@ class DbService {
         _transactionsBox,
         encryptionCipher: encryptionCipher,
       );
+      _khatabooks = await Hive.openBox<Khatabook>( // ← NEW
+        _khatabooksBox,
+        encryptionCipher: encryptionCipher,
+      );
     } else {
       // ── Fix 6: Fallback — open unencrypted after key loss ──
-      // Data from this session will be unreadable from old encrypted files,
-      // so we delete the corrupted boxes and open fresh ones.
       debugPrint('[DbService] Encryption key lost — opening fresh unencrypted boxes');
       try {
         await Hive.deleteBoxFromDisk(_customersBox);
         await Hive.deleteBoxFromDisk(_transactionsBox);
+        await Hive.deleteBoxFromDisk(_khatabooksBox); // ← NEW
       } catch (_) {}
       _customers     = await Hive.openBox<Customer>(_customersBox);
       _transactions  = await Hive.openBox<TransactionModel>(_transactionsBox);
+      _khatabooks    = await Hive.openBox<Khatabook>(_khatabooksBox); // ← NEW
     }
 
     // Settings & sync queue (unencrypted — stores simple flags)
@@ -111,6 +120,10 @@ class DbService {
     for (final txn in _transactions!.values) {
       _indexAddTxn(txn.customerId, txn.id);
     }
+
+    // ── One-time Hive field migration: stamp khatabookId='default' on all ──
+    // existing records that pre-date this feature. Idempotent.
+    await _migrateToDefaultBook();
   }
 
   /// Returns a [HiveCipher] or null if the key was lost (encrypted storage wiped).
@@ -154,6 +167,107 @@ class DbService {
   /// AutoSyncNotifier reads this to trigger an immediate restoreAll().
   bool _encryptionKeyLost = false;
   bool get encryptionKeyLost => _encryptionKeyLost;
+
+  // ---------------------------------------------------------------------------
+  // Khatabook CRUD (NEW)
+  // ---------------------------------------------------------------------------
+
+  /// Idempotent one-time migration: creates the 'default' book and stamps all
+  /// existing Hive records with khatabookId='default'. Only runs once per install
+  /// (guarded by the 'hiveFieldsMigrated' settings key).
+  Future<void> _migrateToDefaultBook() async {
+    // 1. Create the 'default' Khatabook if the box is empty
+    if (_khatabooks!.isEmpty) {
+      final defaultBook = Khatabook(
+        id: 'default',
+        name: getBusinessName() ?? 'My Business',
+        createdAt: DateTime.now(),
+      );
+      await _khatabooks!.put('default', defaultBook);
+      debugPrint('[DbService] Created default Khatabook: ${defaultBook.name}');
+    }
+
+    // 2. Re-persist all Customer and Transaction records so the 'khatabookId'
+    //    field is physically written to disk. The try/catch in read() already
+    //    returns 'default' for old records, but until write() is called the
+    //    bytes aren't on disk. This ensures future reads don't need the fallback.
+    final alreadyMigrated =
+        _settings!.get('hiveFieldsMigrated', defaultValue: false) as bool;
+    if (!alreadyMigrated) {
+      debugPrint('[DbService] Running one-time Hive field migration...');
+      // Re-save all customers (puts khatabookId bytes on disk)
+      if (_customers!.isNotEmpty) {
+        await _customers!.putAll(
+          {for (final c in _customers!.values) c.id: c},
+        );
+      }
+      // Re-save all transactions
+      if (_transactions!.isNotEmpty) {
+        await _transactions!.putAll(
+          {for (final t in _transactions!.values) t.id: t},
+        );
+      }
+      await _settings!.put('hiveFieldsMigrated', true);
+      debugPrint('[DbService] Hive field migration complete.');
+    }
+  }
+
+  /// Returns all non-deleted Khatabooks sorted by creation date (oldest first).
+  List<Khatabook> getAllKhatabooks() {
+    return _khatabooks!.values
+        .where((b) => !b.isDeleted)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  Future<void> saveKhatabook(Khatabook book) async {
+    await _khatabooks!.put(book.id, book);
+    if (!isRestoring) {
+      await _syncQueue!.put(
+        'khatabook_${book.id}',
+        {'type': 'khatabook', 'id': book.id, 'action': 'set'},
+      );
+    }
+  }
+
+  Future<void> softDeleteKhatabook(String id) async {
+    final book = _khatabooks!.get(id);
+    if (book == null) return;
+    final deleted = book.copyWith(isDeleted: true, updatedAt: DateTime.now());
+    await _khatabooks!.put(id, deleted);
+    if (!isRestoring) {
+      await _syncQueue!.put(
+        'khatabook_$id',
+        {'type': 'khatabook', 'id': id, 'action': 'set'},
+      );
+    }
+  }
+
+  /// Returns the count of active (non-deleted) contacts in a given book.
+  /// Used by the deletion guard to block removing a book with contacts.
+  int customerCountForBook(String khatabookId) {
+    return _customers!.values
+        .where((c) => !c.isDeleted && c.khatabookId == khatabookId)
+        .length;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Active Khatabook settings (NEW)
+  // ---------------------------------------------------------------------------
+
+  String get activeKhatabookId =>
+      _settings?.get('activeKhatabookId', defaultValue: 'default') as String? ?? 'default';
+
+  Future<void> setActiveKhatabookId(String id) async =>
+      _settings?.put('activeKhatabookId', id);
+
+  /// True once the one-time cloud migration (flat → nested Firestore paths)
+  /// has been successfully completed by FirestoreBackupService.
+  bool get cloudMigrationDone =>
+      _settings?.get('cloudMigrationDone', defaultValue: false) as bool? ?? false;
+
+  Future<void> setCloudMigrationDone(bool value) async =>
+      _settings?.put('cloudMigrationDone', value);
 
   // ---------------------------------------------------------------------------
   // Settings
@@ -218,12 +332,16 @@ class DbService {
 
   /// Returns all active (non-deleted) customers sorted newest-first.
   /// Fix 5: Result is cached and only re-sorted when the box is mutated.
-  List<Customer> getAllCustomers() {
-    _sortedCustomersCache ??= _customers!.values
+  List<Customer> getAllCustomers({String? filterByBookId}) {
+    final all = _customers!.values
         .where((c) => !c.isDeleted)
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return _sortedCustomersCache!;
+    _sortedCustomersCache ??= all;
+    if (filterByBookId != null) {
+      return all.where((c) => c.khatabookId == filterByBookId).toList();
+    }
+    return all; // used by backup service: returns ALL books
   }
 
   /// Returns all soft-deleted customers for the Recycle Bin.
@@ -436,7 +554,7 @@ class DbService {
     }
   }
 
-  /// Clears ALL local data from both boxes. Called before a full restore.
+  /// Clears ALL local data from all boxes. Called before a full restore.
   Future<void> clearAll() async {
     final txns = _transactions?.values.toList() ?? const [];
     for (final t in txns) {
@@ -449,9 +567,10 @@ class DbService {
     }
     await _customers!.clear();
     await _transactions!.clear();
+    await _khatabooks!.clear();   // ← NEW
     await _syncQueue!.clear();
-    _txnIndex.clear();          // Fix 3: reset index
-    _invalidateSortedCache();   // Fix 5: invalidate cache
+    _txnIndex.clear();            // Fix 3: reset index
+    _invalidateSortedCache();     // Fix 5: invalidate cache
   }
 
   // ---------------------------------------------------------------------------

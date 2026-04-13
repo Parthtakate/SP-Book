@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/transaction.dart';
 import 'db_provider.dart';
+import 'khatabook_provider.dart';
 import 'reports_provider.dart';
 import 'customer_last_transaction_provider.dart';
 
@@ -22,16 +23,18 @@ class TransactionService {
     required bool isGot,
     String? note,
     String? imagePath,
-    DateTime? date, // Phase 4: allow back-dating
+    DateTime? date,
   }) async {
+    final activeId = ref.read(activeKhatabookIdProvider);
     final transaction = TransactionModel(
       id: const Uuid().v4(),
       customerId: customerId,
       amountInPaise: amountInPaise,
       isGot: isGot,
       note: note ?? '',
-      date: date ?? DateTime.now(), // use provided date or default to now
+      date: date ?? DateTime.now(),
       imagePath: imagePath,
+      khatabookId: activeId,   // ← tag with active book
     );
     await ref.read(dbServiceProvider).saveTransaction(transaction);
     _refresh(customerId);
@@ -95,12 +98,16 @@ final customerBalanceProvider =
 
 /// Returns `Map<customerId, netBalanceInPaise>`.
 /// Positive = customer owes you. Negative = you owe them.
+/// Scoped to the ACTIVE Khatabook — cross-book transactions are excluded.
 /// Kept as [int] to avoid floating-point rounding on financial data.
 /// Invalidated explicitly in TransactionService._refresh().
 final customerBalanceMapProvider = Provider<Map<String, int>>((ref) {
   final db = ref.watch(dbServiceProvider);
+  final activeId = ref.watch(activeKhatabookIdProvider); // ← scope to active book
   final Map<String, int> map = {};
   for (final t in db.transactionsBox.values) {
+    if (t.isDeleted) continue;
+    if (t.khatabookId != activeId) continue;             // ← exclude other books
     final delta = t.isGot ? -t.amountInPaise : t.amountInPaise;
     map[t.customerId] = (map[t.customerId] ?? 0) + delta;
   }

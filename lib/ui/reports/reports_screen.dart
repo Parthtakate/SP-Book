@@ -43,21 +43,26 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   String _filterMode = 'ALL';
   final TextEditingController _searchCtrl = TextEditingController();
 
+  late final ContactTypeFilterNotifier _typeFilterNotifier;
+
   @override
   void initState() {
     super.initState();
+    // Capture the notifier to safely clear it during dispose without accessing 'ref'
+    _typeFilterNotifier = ref.read(contactTypeFilterProvider.notifier);
+    
     // Set the type filter so accountStatementProvider scopes to the correct type.
     // Use addPostFrameCallback to avoid mutation-during-build errors.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(contactTypeFilterProvider.notifier).setType(widget.filterType);
+      _typeFilterNotifier.setType(widget.filterType);
     });
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
-    // Always clear the type filter when leaving so it doesn't persist.
-    ref.read(contactTypeFilterProvider.notifier).clear();
+    // Safely clear the type filter using the captured notifier
+    _typeFilterNotifier.clear();
     super.dispose();
   }
 

@@ -10,6 +10,7 @@ import '../services/firestore_backup_service.dart';
 import 'auth_provider.dart';
 import 'customer_provider.dart';
 import 'db_provider.dart';
+import 'khatabook_provider.dart';
 import 'transaction_provider.dart';
 
 enum SyncStatus { synced, syncing, offline, failed, idle }
@@ -153,6 +154,8 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
     final db = ref.read(dbServiceProvider);
     _customerSub = db.customersBox.watch().listen((_) => _onDataChanged());
     _txnSub = db.transactionsBox.watch().listen((_) => _onDataChanged());
+    // Also watch khatabooks box so backup triggers when a new book is created
+    db.khatabooksBox.watch().listen((_) => _onDataChanged());
   }
 
   void stop() {
@@ -329,6 +332,8 @@ class AutoSyncNotifier extends Notifier<AutoSyncState> {
     ref.invalidate(customersProvider);
     ref.invalidate(customerBalanceMapProvider);
     ref.invalidate(dashboardBalancesProvider);
+    ref.invalidate(khatabooksProvider);        // ← NEW: refresh book list
+    ref.invalidate(activeKhatabookIdProvider); // ← NEW: re-read persisted book
     if (kDebugMode) debugPrint('[AutoSync] Invalidated UI providers after restore.');
   }
 

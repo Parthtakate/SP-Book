@@ -9,8 +9,10 @@ import '../providers/auth_provider.dart';
 import '../providers/auto_sync_provider.dart';
 import '../providers/customer_provider.dart';
 import '../providers/db_provider.dart';
+import '../providers/khatabook_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../services/pdf_service.dart';
+import 'khatabook/khatabook_selector_sheet.dart';
 import 'onboarding_screen.dart';
 import 'settings/recycle_bin_screen.dart';
 
@@ -305,7 +307,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
 
                     const SizedBox(height: 32),
 
-                    // ---- Recycle Bin
+                    // ---- Khatabooks + Recycle Bin
                     _SectionLabel('Storage'),
                     const SizedBox(height: 12),
                     Container(
@@ -320,17 +322,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen>
                           ),
                         ],
                       ),
-                      child: _ActionCard(
-                        icon: Icons.delete_outline_rounded,
-                        iconColor: const Color(0xFFF59E0B),
-                        title: 'Recycle Bin',
-                        subtitle: 'View and restore recently deleted items',
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const RecycleBinScreen(),
+                      child: Column(
+                        children: [
+                          // Manage Khatabooks entry
+                          Consumer(
+                            builder: (ctx, cref, _) {
+                              final activeBook = cref.watch(activeKhatabookProvider);
+                              final bookCount = cref.watch(khatabooksProvider).length;
+                              return _ActionCard(
+                                icon: Icons.menu_book_rounded,
+                                iconColor: const Color(0xFF005CEE),
+                                title: 'Manage Khatabooks',
+                                subtitle: activeBook != null
+                                    ? 'Active: ${activeBook.name}  ·  $bookCount book${bookCount == 1 ? '' : 's'}'
+                                    : 'Switch or create a new ledger',
+                                onTap: () => showModalBottomSheet(
+                                  context: ctx,
+                                  isScrollControlled: true,
+                                  backgroundColor: Colors.transparent,
+                                  builder: (_) => const KhatabookSelectorSheet(),
+                                ),
+                              );
+                            },
                           ),
-                        ),
+                          const Divider(height: 1, indent: 64),
+                          _ActionCard(
+                            icon: Icons.delete_outline_rounded,
+                            iconColor: const Color(0xFFF59E0B),
+                            title: 'Recycle Bin',
+                            subtitle: 'View and restore recently deleted items',
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const RecycleBinScreen(),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
 

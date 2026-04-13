@@ -5,80 +5,126 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
-    // ----------------------------
-    // Customers: users/{userId}/customers/{customerId}
-    // ----------------------------
-    match /users/{userId}/customers/{customerId} {
-      allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId)
-        // Required fields
-        && request.resource.data.id is string
-        && request.resource.data.id == customerId
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100
-        && request.resource.data.createdAt is timestamp
-        // phone is optional (nullable)
-        && (
-          request.resource.data.get('phone', null) == null
-          || (request.resource.data.phone is string && request.resource.data.phone.size() <= 20)
-        )
-        // updatedAt is written by the client as serverTimestamp()
-        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp)
-        // isDeleted must be a boolean if present
-        && (request.resource.data.get('isDeleted', null) == null || request.resource.data.isDeleted is bool)
-        // contactType must be one of the enum string values if present
-        && (request.resource.data.get('contactType', null) == null || request.resource.data.contactType in ['customer', 'supplier', 'staff']);
+    match /users/{userId} {
+      // ======================================================================
+      // Khatabook metadata: users/{userId}/khatabooks/{khatabookId}
+      // ======================================================================
+      match /khatabooks/{khatabookId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.id == khatabookId
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 100
+          && request.resource.data.createdAt is timestamp
+          && (request.resource.data.get('updatedAt', null) == null
+              || request.resource.data.updatedAt is timestamp)
+          && (request.resource.data.get('isDeleted', null) == null
+              || request.resource.data.isDeleted is bool);
+        allow delete: if isOwner(userId);
 
-      allow delete: if isOwner(userId);
+        // ------------------------------------------------------------------
+        // Customers: users/{userId}/khatabooks/{khatabookId}/customers/{customerId}
+        // ------------------------------------------------------------------
+        match /customers/{customerId} {
+          allow read: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            // ID integrity
+            && request.resource.data.id is string
+            && request.resource.data.id == customerId
+            // Book scoping
+            && request.resource.data.get('khatabookId', '') == khatabookId
+            // Required fields
+            && request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+            && request.resource.data.name.size() <= 100
+            && request.resource.data.createdAt is timestamp
+            // phone is optional (nullable)
+            && (
+              request.resource.data.get('phone', null) == null
+              || (request.resource.data.phone is string
+                  && request.resource.data.phone.size() <= 20)
+            )
+            && (request.resource.data.get('updatedAt', null) == null
+                || request.resource.data.updatedAt is timestamp)
+            && (request.resource.data.get('isDeleted', null) == null
+                || request.resource.data.isDeleted is bool)
+            // contactType must be a valid enum string if present
+            && (request.resource.data.get('contactType', null) == null
+                || request.resource.data.contactType in ['customer', 'supplier', 'staff']);
+          allow delete: if isOwner(userId);
+        }
+
+        // ------------------------------------------------------------------
+        // Transactions: users/{userId}/khatabooks/{khatabookId}/transactions/{txnId}
+        // ------------------------------------------------------------------
+        match /transactions/{txnId} {
+          allow read: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            // ID integrity
+            && request.resource.data.id is string
+            && request.resource.data.id == txnId
+            // Book scoping
+            && request.resource.data.get('khatabookId', '') == khatabookId
+            // Required fields
+            && request.resource.data.customerId is string
+            && request.resource.data.customerId.size() > 0
+            && request.resource.data.amountInPaise is number
+            && request.resource.data.amountInPaise >= 0
+            && request.resource.data.isGot is bool
+            && request.resource.data.note is string
+            && request.resource.data.note.size() <= 200
+            && request.resource.data.date is number
+            // imagePath is optional
+            && (request.resource.data.get('imagePath', null) == null
+                || request.resource.data.imagePath is string)
+            && (request.resource.data.get('updatedAt', null) == null
+                || request.resource.data.updatedAt is timestamp);
+          allow delete: if isOwner(userId);
+        }
+
+        // ------------------------------------------------------------------
+        // Backup metadata: .../khatabooks/{khatabookId}/meta/backup_info
+        // ------------------------------------------------------------------
+        match /meta/backup_info {
+          allow read: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.get('lastBackupAt', null) == null
+                || request.resource.data.lastBackupAt is timestamp)
+            && (request.resource.data.get('device', null) == null
+                || request.resource.data.device is string)
+            && request.resource.data.totalCustomers is number
+            && request.resource.data.totalTransactions is number;
+        }
+      }
+
+      // ======================================================================
+      // LEGACY flat-path rules — kept during migration window only.
+      // These paths will be cleaned up by FirestoreBackupService._cleanupOldFlatPaths()
+      // after the first successful backupAll() on the new structure.
+      // ======================================================================
+      match /customers/{customerId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0;
+      }
+      match /transactions/{txnId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.customerId is string;
+      }
+      match /meta/{docId} {
+        allow read, write: if isOwner(userId);
+      }
     }
 
-    // ----------------------------
-    // Transactions: users/{userId}/transactions/{txnId}
-    // ----------------------------
-    match /users/{userId}/transactions/{txnId} {
-      allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId)
-        // Required fields
-        && request.resource.data.id is string
-        && request.resource.data.id == txnId
-        && request.resource.data.customerId is string
-        && request.resource.data.customerId.size() > 0
-        && request.resource.data.amountInPaise is number
-        && request.resource.data.amountInPaise >= 0
-        && request.resource.data.isGot is bool
-        && request.resource.data.note is string
-        && request.resource.data.note.size() <= 200
-        && request.resource.data.date is number
-        // imagePath is optional and must be a string if present
-        && (request.resource.data.get('imagePath', null) == null || request.resource.data.imagePath is string)
-        // updatedAt is written as serverTimestamp() (optional in older docs)
-        && (request.resource.data.get('updatedAt', null) == null || request.resource.data.updatedAt is timestamp);
-
-      allow delete: if isOwner(userId);
-    }
-
-    // ----------------------------
-    // Backup metadata: users/{userId}/meta/backup_info
-    // ----------------------------
-    match /users/{userId}/meta/backup_info {
-      allow read: if isOwner(userId);
-      allow create, update: if isOwner(userId)
-        && (
-          request.resource.data.get('lastBackupAt', null) == null
-          || request.resource.data.lastBackupAt is timestamp
-        )
-        && (
-          request.resource.data.get('device', null) == null
-          || request.resource.data.device is string
-        )
-        && request.resource.data.totalCustomers is number
-        && request.resource.data.totalTransactions is number;
-    }
-
-    // ----------------------------
-    // Reminders: reminders/{userId}/items/{reminderId}
-    // ----------------------------
+    // ========================================================================
+    // Reminders (unchanged)
+    // ========================================================================
     match /reminders/{userId}/items/{reminderId} {
       allow read: if isOwner(userId);
       allow create, update: if isOwner(userId)
@@ -92,8 +138,8 @@ service cloud.firestore {
         && request.resource.data.dueDate is number
         && request.resource.data.note is string
         && request.resource.data.note.size() <= 500
-        && (request.resource.data.createdAt == null || request.resource.data.createdAt is timestamp);
-
+        && (request.resource.data.createdAt == null
+            || request.resource.data.createdAt is timestamp);
       allow delete: if isOwner(userId);
     }
   }

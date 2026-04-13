@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/customer.dart';
 import 'db_provider.dart';
+import 'khatabook_provider.dart';
 import 'transaction_provider.dart';
 
 // ---------------------------------------------------------------------------
@@ -42,7 +43,9 @@ final customersProvider =
 class CustomerNotifier extends Notifier<List<Customer>> {
   @override
   List<Customer> build() {
-    return ref.watch(dbServiceProvider).getAllCustomers();
+    // Scope to active book: all screens auto-refresh when the book switches
+    final activeId = ref.watch(activeKhatabookIdProvider);
+    return ref.watch(dbServiceProvider).getAllCustomers(filterByBookId: activeId);
   }
 
   Future<void> addCustomer(
@@ -50,22 +53,25 @@ class CustomerNotifier extends Notifier<List<Customer>> {
     String? phone, {
     ContactType contactType = ContactType.customer,
   }) async {
+    final db = ref.read(dbServiceProvider);
+    final activeId = ref.read(activeKhatabookIdProvider);
     final customer = Customer(
       id: const Uuid().v4(),
       name: name,
       phone: phone,
       createdAt: DateTime.now(),
       contactType: contactType,
+      khatabookId: activeId,   // ← tag with active book
     );
-    final db = ref.read(dbServiceProvider);
     await db.saveCustomer(customer);
-    state = db.getAllCustomers();
+    state = db.getAllCustomers(filterByBookId: activeId);
   }
 
   Future<void> updateCustomer(Customer customer) async {
     final db = ref.read(dbServiceProvider);
     await db.saveCustomer(customer);
-    state = db.getAllCustomers();
+    final activeId = ref.read(activeKhatabookIdProvider);
+    state = db.getAllCustomers(filterByBookId: activeId);
   }
 
   Future<void> deleteCustomer(String id) async {
@@ -73,7 +79,8 @@ class CustomerNotifier extends Notifier<List<Customer>> {
     await db.deleteCustomer(id);
     ref.invalidate(customerBalanceMapProvider);
     ref.invalidate(dashboardBalancesProvider);
-    state = db.getAllCustomers();
+    final activeId = ref.read(activeKhatabookIdProvider);
+    state = db.getAllCustomers(filterByBookId: activeId);
   }
 }
 

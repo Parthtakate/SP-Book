@@ -12,6 +12,7 @@ class Customer {
   final DateTime? updatedAt;
   final bool isDeleted;
   final ContactType contactType;
+  final String khatabookId; // which ledger this contact belongs to
 
   const Customer({
     required this.id,
@@ -21,7 +22,11 @@ class Customer {
     this.updatedAt,
     this.isDeleted = false,
     this.contactType = ContactType.customer,
+    this.khatabookId = 'default',
   });
+
+  /// True when this contact belongs to the original/default ledger.
+  bool get isInDefaultBook => khatabookId == 'default';
 
   Customer copyWith({
     String? name,
@@ -29,6 +34,7 @@ class Customer {
     DateTime? updatedAt,
     bool? isDeleted,
     ContactType? contactType,
+    String? khatabookId,
   }) {
     return Customer(
       id: id,
@@ -38,6 +44,7 @@ class Customer {
       updatedAt: updatedAt ?? this.updatedAt,
       isDeleted: isDeleted ?? this.isDeleted,
       contactType: contactType ?? this.contactType,
+      khatabookId: khatabookId ?? this.khatabookId,
     );
   }
 
@@ -50,6 +57,7 @@ class Customer {
     'updatedAt': FieldValue.serverTimestamp(),
     'isDeleted': isDeleted,
     'contactType': contactType.name,
+    'khatabookId': khatabookId,
   };
 
   factory Customer.fromFirestore(Map<String, dynamic> data) => Customer(
@@ -62,6 +70,7 @@ class Customer {
         : null,
     isDeleted: data['isDeleted'] as bool? ?? false,
     contactType: _parseContactType(data['contactType'] as String?),
+    khatabookId: data['khatabookId'] as String? ?? 'default',
   );
 
   /// Safe parser — old Firestore docs without 'contactType' default to customer.
@@ -97,8 +106,7 @@ class CustomerAdapter extends TypeAdapter<Customer> {
         return false;
       }
     }();
-    // contactType is the newest field — old records won't have these bytes.
-    // The try/catch gracefully defaults old records to ContactType.customer.
+    // contactType — appended in a previous version.
     final contactType = () {
       try {
         final raw = reader.readString();
@@ -106,6 +114,10 @@ class CustomerAdapter extends TypeAdapter<Customer> {
       } catch (_) {
         return ContactType.customer;
       }
+    }();
+    // khatabookId — newest field; old records without it default to 'default'.
+    final khatabookId = () {
+      try { return reader.readString(); } catch (_) { return 'default'; }
     }();
     return Customer(
       id: id,
@@ -115,6 +127,7 @@ class CustomerAdapter extends TypeAdapter<Customer> {
       updatedAt: updatedAt,
       isDeleted: isDeleted,
       contactType: contactType,
+      khatabookId: khatabookId,
     );
   }
 
@@ -129,6 +142,7 @@ class CustomerAdapter extends TypeAdapter<Customer> {
       writer.writeInt(obj.updatedAt!.millisecondsSinceEpoch);
     }
     writer.writeBool(obj.isDeleted);
-    writer.writeString(obj.contactType.name); // Appended last — backward compat
+    writer.writeString(obj.contactType.name); // Appended — backward compat
+    writer.writeString(obj.khatabookId);      // Appended last — backward compat
   }
 }

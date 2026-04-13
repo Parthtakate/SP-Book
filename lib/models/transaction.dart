@@ -11,6 +11,7 @@ class TransactionModel {
   final String? imagePath;
   final DateTime? updatedAt;
   final bool isDeleted;
+  final String khatabookId; // which ledger this transaction belongs to
 
   const TransactionModel({
     required this.id,
@@ -22,6 +23,7 @@ class TransactionModel {
     this.imagePath,
     this.updatedAt,
     this.isDeleted = false,
+    this.khatabookId = 'default',
   });
 
   TransactionModel copyWith({
@@ -32,6 +34,7 @@ class TransactionModel {
     DateTime? date,
     DateTime? updatedAt,
     bool? isDeleted,
+    String? khatabookId,
   }) {
     return TransactionModel(
       id: id,
@@ -43,6 +46,7 @@ class TransactionModel {
       imagePath: imagePath ?? this.imagePath,
       updatedAt: updatedAt ?? this.updatedAt,
       isDeleted: isDeleted ?? this.isDeleted,
+      khatabookId: khatabookId ?? this.khatabookId,
     );
   }
 
@@ -56,6 +60,7 @@ class TransactionModel {
     'imagePath': imagePath, // Included as null if absent to satisfy rule sync
     'updatedAt': FieldValue.serverTimestamp(),
     'isDeleted': isDeleted,
+    'khatabookId': khatabookId,
   };
 
   factory TransactionModel.fromFirestore(Map<String, dynamic> data) =>
@@ -69,6 +74,7 @@ class TransactionModel {
         imagePath: data['imagePath'] as String?,
         updatedAt: data['updatedAt'] != null ? (data['updatedAt'] as Timestamp).toDate() : null,
         isDeleted: data['isDeleted'] as bool? ?? false,
+        khatabookId: data['khatabookId'] as String? ?? 'default',
       );
 }
 
@@ -90,6 +96,9 @@ class TransactionModelAdapter extends TypeAdapter<TransactionModel> {
       isDeleted: () {
         try { return reader.readBool(); } catch (_) { return false; }
       }(),
+      khatabookId: () {
+        try { return reader.readString(); } catch (_) { return 'default'; }
+      }(),
     );
   }
 
@@ -110,5 +119,6 @@ class TransactionModelAdapter extends TypeAdapter<TransactionModel> {
       writer.writeInt(obj.updatedAt!.millisecondsSinceEpoch);
     }
     writer.writeBool(obj.isDeleted);
+    writer.writeString(obj.khatabookId); // Appended last — backward compat
   }
 }

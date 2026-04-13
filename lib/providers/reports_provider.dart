@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/material.dart';
 import 'db_provider.dart';
+import 'khatabook_provider.dart';
 import '../models/customer.dart';
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,7 @@ final accountStatementProvider = FutureProvider<AccountStatement>((ref) async {
   final searchText = ref.watch(reportSearchTextProvider).trim().toLowerCase();
   final contactTypeFilter = ref.watch(contactTypeFilterProvider);
   final db = ref.watch(dbServiceProvider);
+  final activeId = ref.watch(activeKhatabookIdProvider); // ← scope to active book
 
   // Allow the UI to render the loading shimmer for at least one frame.
   await Future.delayed(const Duration(milliseconds: 16));
@@ -148,8 +150,8 @@ final accountStatementProvider = FutureProvider<AccountStatement>((ref) async {
       ? DateTime(dateRange.end.year, dateRange.end.month, dateRange.end.day)
       : null;
 
-  // Build a name map and — when filtering by type — a set of matching ids.
-  final allCustomers = db.getAllCustomers();
+  // Build name map scoped to active book
+  final allCustomers = db.getAllCustomers(filterByBookId: activeId);
   final customerNames = <String, String>{
     for (final c in allCustomers) c.id: c.name,
   };
@@ -164,6 +166,7 @@ final accountStatementProvider = FutureProvider<AccountStatement>((ref) async {
 
   for (final t in db.transactionsBox.values) {
     if (t.isDeleted) continue;
+    if (t.khatabookId != activeId) continue; // ← scope to active book
 
     // Skip contacts not in the allowed type set (when a filter is active)
     if (allowedIds != null && !allowedIds.contains(t.customerId)) continue;

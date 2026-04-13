@@ -5,11 +5,13 @@ import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../providers/customer_provider.dart';
+import '../providers/khatabook_provider.dart';
 import '../providers/transaction_provider.dart';
 import '../providers/customer_last_transaction_provider.dart';
 import '../models/customer.dart';
 import 'customer/add_customer_screen.dart';
 import 'customer/customer_details_screen.dart';
+import 'khatabook/khatabook_selector_sheet.dart';
 import 'reports/reports_screen.dart';
 import 'settings_screen.dart';
 import '../providers/auto_sync_provider.dart';
@@ -173,24 +175,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   AppBar _buildAppBar(BuildContext context) {
     return AppBar(
-      title: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.asset(
-              'assets/images/logo.png',
-              width: 32,
-              height: 32,
-              fit: BoxFit.cover,
-            ),
+      // Logo as leading widget, frees up full title width for the book selector
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Image.asset(
+            'assets/images/logo.png',
+            width: 32,
+            height: 32,
+            fit: BoxFit.cover,
           ),
-          const SizedBox(width: 10),
-          const Text(
-            'SPBOOKS',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-          ),
-        ],
+        ),
       ),
+      title: const _KhatabookSelectorButton(), // ← replaces static 'SPBOOKS' text
       backgroundColor: const Color(0xFF005CEE),
       foregroundColor: Colors.white,
       elevation: 0,
@@ -224,6 +222,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           Tab(icon: Icon(Icons.store, size: 18), text: 'Supplier'),
           Tab(icon: Icon(Icons.badge, size: 18), text: 'Staff'),
         ],
+      ),
+    );
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Khatabook selector button shown in the AppBar title slot
+// ───────────────────────────────────────────────────────────────────────────
+
+class _KhatabookSelectorButton extends ConsumerWidget {
+  const _KhatabookSelectorButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final book = ref.watch(activeKhatabookProvider);
+    final bookName = book?.name ?? 'My Business';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => const KhatabookSelectorSheet(),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                bookName,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                  color: Colors.white,
+                  letterSpacing: -0.3,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+          ],
+        ),
       ),
     );
   }
