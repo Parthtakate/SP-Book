@@ -375,7 +375,7 @@ class FirestoreBackupService {
 
       final hasNewStructure = booksSnap.docs.isNotEmpty;
 
-      if (!hasNewStructure || !db.cloudMigrationDone) {
+      if (!hasNewStructure) {
         // ── MIGRATION PATH: new paths empty → read from old flat paths ─────────
         if (kDebugMode) debugPrint('[SYNC][$_ts] restoreAll() MIGRATION PATH — reading legacy flat paths...');
 
