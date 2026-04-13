@@ -8,7 +8,7 @@ import '../../models/transaction.dart';
 import '../../providers/transaction_provider.dart';
 import 'add_transaction_screen.dart';
 
-class EntryDetailsScreen extends ConsumerWidget {
+class EntryDetailsScreen extends ConsumerStatefulWidget {
   final Customer customer;
   final TransactionModel transaction;
   final List<TransactionModel> allTransactions;
@@ -19,6 +19,19 @@ class EntryDetailsScreen extends ConsumerWidget {
     required this.transaction,
     required this.allTransactions,
   });
+
+  @override
+  ConsumerState<EntryDetailsScreen> createState() => _EntryDetailsScreenState();
+}
+
+class _EntryDetailsScreenState extends ConsumerState<EntryDetailsScreen> {
+  late int _runningBalancePaise;
+
+  @override
+  void initState() {
+    super.initState();
+    _runningBalancePaise = _calculateRunningBalance();
+  }
 
   Color _getContactColor(ContactType type) {
     switch (type) {
@@ -34,13 +47,13 @@ class EntryDetailsScreen extends ConsumerWidget {
   int _calculateRunningBalance() {
     int balance = 0;
     // allTransactions is sorted newest first. Reverse to calculate running balance.
-    for (var tx in allTransactions.reversed) {
+    for (var tx in widget.allTransactions.reversed) {
       if (!tx.isGot) {
         balance += tx.amountInPaise;
       } else {
         balance -= tx.amountInPaise;
       }
-      if (tx.id == transaction.id) {
+      if (tx.id == widget.transaction.id) {
         break;
       }
     }
@@ -48,16 +61,16 @@ class EntryDetailsScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
     final dateFormat = DateFormat('dd MMM yy • hh:mm a');
-    final headerColor = _getContactColor(customer.contactType);
+    final headerColor = _getContactColor(widget.customer.contactType);
     
-    final amountText = currency.format(transaction.amountInPaise / 100.0);
-    final finalAmountColor = transaction.isGot ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
-    final typeLabel = transaction.isGot ? 'You got' : 'You gave';
+    final amountText = currency.format(widget.transaction.amountInPaise / 100.0);
+    final finalAmountColor = widget.transaction.isGot ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
+    final typeLabel = widget.transaction.isGot ? 'You got' : 'You gave';
 
-    int runningBalancePaise = _calculateRunningBalance();
+    int runningBalancePaise = _runningBalancePaise;
     final Color rbColor = runningBalancePaise >= 0 ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
 
     return Scaffold(
@@ -83,7 +96,7 @@ class EntryDetailsScreen extends ConsumerWidget {
                         radius: 22,
                         backgroundColor: Colors.black,
                         child: Text(
-                          customer.name.isNotEmpty ? customer.name[0].toUpperCase() : '?',
+                          widget.customer.name.isNotEmpty ? widget.customer.name[0].toUpperCase() : '?',
                           style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -93,12 +106,12 @@ class EntryDetailsScreen extends ConsumerWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              customer.name,
+                              widget.customer.name,
                               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              dateFormat.format(transaction.date),
+                              dateFormat.format(widget.transaction.date),
                               style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
                             ),
                           ],
@@ -136,9 +149,9 @@ class EntryDetailsScreen extends ConsumerWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => AddTransactionScreen(
-                          customer: customer,
-                          isGot: transaction.isGot,
-                          existingTransaction: transaction,
+                          customer: widget.customer,
+                          isGot: widget.transaction.isGot,
+                          existingTransaction: widget.transaction,
                         ),
                       ),
                     ).then((_) {
@@ -189,7 +202,7 @@ class EntryDetailsScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'You ${transaction.isGot ? 'got' : 'gave'}: ${currency.format(transaction.amountInPaise / 100.0)}',
+                        'You ${widget.transaction.isGot ? 'got' : 'gave'}: ${currency.format(widget.transaction.amountInPaise / 100.0)}',
                         style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
                       ),
                       const SizedBox(height: 2),
@@ -204,7 +217,7 @@ class EntryDetailsScreen extends ConsumerWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'https://khatabook.com/t/${transaction.id.substring(0, 10)}', // Dummy link similar to image
+                        'https://khatabook.com/t/${widget.transaction.id.substring(0, 10)}', // Dummy link similar to image
                         style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
                       ),
                     ],
@@ -261,7 +274,7 @@ class EntryDetailsScreen extends ConsumerWidget {
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                     ),
-                    onPressed: () => _deleteTransaction(context, ref),
+                    onPressed: () => _deleteTransaction(context),
                     icon: const Icon(Icons.delete_outline, size: 18),
                     label: const Text('DELETE', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
                   ),
@@ -289,7 +302,7 @@ class EntryDetailsScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _deleteTransaction(BuildContext context, WidgetRef ref) async {
+  Future<void> _deleteTransaction(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -315,7 +328,7 @@ class EntryDetailsScreen extends ConsumerWidget {
     );
 
     if (confirm == true) {
-      ref.read(transactionServiceProvider).deleteTransaction(transaction.id, customer.id);
+      ref.read(transactionServiceProvider).deleteTransaction(widget.transaction.id, widget.customer.id);
       if (context.mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -327,11 +340,11 @@ class EntryDetailsScreen extends ConsumerWidget {
 
   void _shareEntry(BuildContext context) {
     final currency = NumberFormat.currency(locale: 'en_IN', symbol: '₹');
-    final amountText = currency.format(transaction.amountInPaise / 100.0);
-    final text = 'Hi ${customer.name},\n'
-        'You ${transaction.isGot ? 'got' : 'gave'}: $amountText\n'
-        'Date: ${DateFormat('dd MMM yy').format(transaction.date)}\n'
-        'Balance: ${currency.format(_calculateRunningBalance().abs() / 100.0)}\n'
+    final amountText = currency.format(widget.transaction.amountInPaise / 100.0);
+    final text = 'Hi ${widget.customer.name},\n'
+        'You ${widget.transaction.isGot ? 'got' : 'gave'}: $amountText\n'
+        'Date: ${DateFormat('dd MMM yy').format(widget.transaction.date)}\n'
+        'Balance: ${currency.format(_runningBalancePaise.abs() / 100.0)}\n'
         'Shared via SPBOOKS App';
     // ignore: deprecated_member_use
     SharePlus.instance.share(

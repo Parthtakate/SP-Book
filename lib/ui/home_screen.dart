@@ -12,7 +12,7 @@ import '../models/customer.dart';
 import 'customer/add_customer_screen.dart';
 import 'customer/customer_details_screen.dart';
 import 'khatabook/khatabook_selector_sheet.dart';
-import 'reports/reports_screen.dart';
+import 'reports/reports_hub_screen.dart';
 import 'settings_screen.dart';
 import '../providers/auto_sync_provider.dart';
 import '../providers/db_provider.dart';
@@ -495,7 +495,7 @@ class _ContactTypePageState extends ConsumerState<_ContactTypePage>
           onViewReports: () => Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => ReportsScreen(filterType: widget.type),
+              builder: (_) => ReportsHubScreen(initialTab: widget.type),
             ),
           ),
         ),

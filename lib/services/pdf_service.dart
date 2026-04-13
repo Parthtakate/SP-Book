@@ -1017,7 +1017,224 @@ class PdfService {
     // Will be natively replaced with specific Khatabook list styles if required.
     return null;
   }
+  static Future<String> generateCustomerListPdfPath({
+    required List<Customer> customers,
+    required Map<String, int> balanceMap,
+    required String businessName,
+  }) async {
+    final theme = await _buildTheme();
+    final pdf = pw.Document(theme: theme);
 
+    // Calculate totals
+    double totalYoullGet = 0; 
+    double totalYoullGive = 0; 
+    
+    for (var c in customers) {
+      if (c.isDeleted) continue;
+      final bal = balanceMap[c.id] ?? 0;
+      if (bal > 0) {
+        totalYoullGet += bal / 100.0;
+      } else if (bal < 0) {
+        totalYoullGive += (bal / 100.0).abs();
+      }
+    }
+
+    final double netBalance = totalYoullGet - totalYoullGive; 
+    final String netType = netBalance >= 0 ? "Dr" : "Cr";
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(0),
+        footer: (context) => _buildKhatabookFooter(context),
+        build: (pw.Context context) {
+          return [
+            // Top Blue Header Bar
+            pw.Container(
+              color: _PdfTheme.khatabookBlue,
+              width: double.infinity,
+              padding: const pw.EdgeInsets.symmetric(horizontal: _PdfTheme.headerPadH, vertical: _PdfTheme.headerPadV),
+              child: pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text(_pdfSafe(businessName), style: pw.TextStyle(color: PdfColors.white, fontSize: 10)),
+                  pw.Row(
+                    children: [
+                      pw.Container(width: 8, height: 8, color: PdfColors.white),
+                      pw.SizedBox(width: 4),
+                      pw.Text(_PdfTheme.khatabookLabel, style: pw.TextStyle(color: PdfColors.white, fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: _PdfTheme.contentPadH),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.SizedBox(height: 28),
+                  // Title Section
+                  pw.Text(
+                    'Customer List Report',
+                    style: pw.TextStyle(fontSize: _PdfTheme.titleSize, fontWeight: pw.FontWeight.bold, color: _PdfTheme.textBlack),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text('(As of Today - ${_Fmt.date.format(DateTime.now())})', style: const pw.TextStyle(fontSize: 10, color: _PdfTheme.textBlack)),
+                  pw.SizedBox(height: 20),
+                  
+                  // Summary Box
+                  pw.Table(
+                    border: pw.TableBorder.all(color: _PdfTheme.borderGrey, width: 1),
+                    columnWidths: const {
+                      0: pw.FlexColumnWidth(),
+                      1: pw.FlexColumnWidth(),
+                      2: pw.FlexColumnWidth(),
+                    },
+                    children: [
+                      pw.TableRow(
+                        children: [
+                          _buildSummaryCell("You'll Get", totalYoullGet, null),
+                          _buildSummaryCell("You'll Give", totalYoullGive, null),
+                          _buildSummaryCell("Net Balance", netBalance.abs(), netType, valueColor: netBalance >= 0 ? _PdfTheme.debitColor : _PdfTheme.creditColor),
+                        ]
+                      )
+                    ]
+                  ),
+                  pw.SizedBox(height: 20),
+
+                  // Counts
+                  pw.Row(
+                    children: [
+                      pw.Text(
+                        'No. of Customers: ${customers.where((c) => !c.isDeleted).length} (All)',
+                        style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold, color: _PdfTheme.textBlack),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 8),
+
+                  // Transaction Table
+                  pw.Table(
+                    border: pw.TableBorder.all(color: _PdfTheme.borderGrey, width: 0.5),
+                    columnWidths: const {
+                      0: pw.FlexColumnWidth(2),
+                      1: pw.FlexColumnWidth(2),
+                      2: pw.FlexColumnWidth(1.5),
+                      3: pw.FlexColumnWidth(1.5),
+                      4: pw.FlexColumnWidth(1.2),
+                    },
+                    children: [
+                      // Header Row
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(color: _PdfTheme.headerRowBg),
+                        children: [
+                          _buildHeaderCell("Name"),
+                          _buildHeaderCell("Details"),
+                          _buildHeaderCell("You'll Get"),
+                          _buildHeaderCell("You'll Give"),
+                          _buildHeaderCell("Collection Date", alignRight: true),
+                        ]
+                      ),
+                      // Rows
+                      for(var c in customers.where((c) => !c.isDeleted))
+                        pw.TableRow(
+                          children: [
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                              child: pw.Text(_pdfSafe(c.name), style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold)),
+                            ),
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                              child: pw.Text(_pdfSafe(c.phone ?? ''), style: const pw.TextStyle(fontSize: _PdfTheme.bodySize)),
+                            ),
+                            pw.Container(
+                              color: (balanceMap[c.id] ?? 0) > 0 ? _PdfTheme.accountDebitBg : null,
+                              padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                              child: pw.Text((balanceMap[c.id] ?? 0) > 0 ? _Fmt.inr.format((balanceMap[c.id]!)/100.0) : '', textAlign: pw.TextAlign.right, style: const pw.TextStyle(fontSize: _PdfTheme.bodySize)),
+                            ),
+                            pw.Container(
+                              color: (balanceMap[c.id] ?? 0) < 0 ? _PdfTheme.accountCreditBg : null,
+                              padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                              child: pw.Text((balanceMap[c.id] ?? 0) < 0 ? _Fmt.inr.format((balanceMap[c.id]!.abs())/100.0) : '', textAlign: pw.TextAlign.right, style: const pw.TextStyle(fontSize: _PdfTheme.bodySize)),
+                            ),
+                            pw.SizedBox(), 
+                          ]
+                        ),
+                      
+                      // Grand Total Row
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(color: _PdfTheme.lightGrey),
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                            child: pw.Text("Grand Total", style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold)),
+                          ),
+                          pw.SizedBox(),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                            child: pw.Text(_Fmt.inr.format(totalYoullGet), textAlign: pw.TextAlign.right, style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold)),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(_PdfTheme.cellPadH),
+                            child: pw.Text(_Fmt.inr.format(totalYoullGive), textAlign: pw.TextAlign.right, style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold)),
+                          ),
+                          pw.SizedBox(),
+                        ]
+                      )
+                    ]
+                  ),
+                  pw.SizedBox(height: 16),
+                  pw.Row(
+                    children: [
+                      pw.Text(
+                        'Report Generated : ${_Fmt.timestamp.format(DateTime.now())}',
+                        style: const pw.TextStyle(fontSize: _PdfTheme.bodySize, color: _PdfTheme.textGrey),
+                      ),
+                    ],
+                  ),
+                ]
+              )
+            )
+          ];
+        }
+      )
+    );
+
+    final output = await getTemporaryDirectory();
+    final file = File('${output.path}/customer_list_report.pdf');
+    await _cleanupExisting(file);
+    await file.writeAsBytes(await pdf.save());
+    return file.path;
+  }
+
+  static pw.Widget _buildHeaderCell(String text, {bool alignRight = false}) {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      child: pw.Text(
+        text,
+        textAlign: alignRight ? pw.TextAlign.right : pw.TextAlign.left,
+        style: pw.TextStyle(fontSize: _PdfTheme.bodySize, fontWeight: pw.FontWeight.bold)
+      )
+    );
+  }
+
+  static pw.Widget _buildSummaryCell(String title, double amount, String? suffix, {PdfColor? valueColor}) {
+    return pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
+          children: [
+            pw.Text(title, style: const pw.TextStyle(fontSize: _PdfTheme.summaryLabelSize, color: _PdfTheme.textGrey)),
+            pw.SizedBox(height: 6),
+            pw.Text(
+              '\u20B9${_Fmt.inr.format(amount)}${suffix != null ? ' $suffix' : ''}',
+              style: pw.TextStyle(fontSize: _PdfTheme.summaryValueSize, fontWeight: pw.FontWeight.bold, color: valueColor ?? _PdfTheme.textBlack),
+            ),
+          ],
+        ),
+      );
+  }
   static Future<void> generateAndShareFullReportStatements({
     required List<Customer> customers,
     required Map<String, List<TransactionModel>> transactionsByCustomer,
